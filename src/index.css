@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@theme {
+  --color-honey: #f59e0b;
+  --color-honey-dark: #d97706;
+  --color-honey-light: #fef3c7;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #f3f4f6;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#root {
+  min-height: 100svh;
+  max-width: 600px;
+  margin: 0 auto;
+  background: white;
+  box-shadow: 0 0 20px rgba(0,0,0,0.05);
+}
+
+@media (min-width: 601px) {
+  #root {
+    min-height: 100vh;
+  }
+}

@@ -1,0 +1,24 @@
+[tools]
+node = "lts"
+
+[tasks.dev]
+description = "Start frontend dev server and API proxy"
+run = [
+  "npm run dev",
+  "tsx watch server/proxy.ts",
+]
+
+[tasks.build]
+description = "Build frontend and compile server"
+run = [
+  "npm run build",
+  "tsc -p tsconfig.server.json",
+]
+
+[tasks.start]
+description = "Start production server"
+run = "node dist-server/proxy.js"
+
+[tasks.lint]
+description = "Run linter"
+run = "npm run lint"

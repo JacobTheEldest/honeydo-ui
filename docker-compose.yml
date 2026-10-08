@@ -1,0 +1,17 @@
+services:
+  honeydo-ui:
+    build: .
+    container_name: honeydo-ui
+    ports:
+      - "3000:3000"
+    environment:
+      - VIKUNJA_API_KEY=${VIKUNJA_API_KEY}
+      - VIKUNJA_BASE_URL=${VIKUNJA_BASE_URL:-https://vikunja.jacobsteward.me}
+      - PORT=3000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
