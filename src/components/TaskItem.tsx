@@ -3,6 +3,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useDrag } from '@use-gesture/react'
 import { ExternalLink, Check, GripVertical } from 'lucide-react'
+import { VIKUNJA_BASE_URL } from '../config.ts'
 import type { VikunjaTask } from '../types/vikunja.ts'
 
 interface TaskItemProps {
@@ -86,7 +87,7 @@ export default function TaskItem({
     }
   }
 
-  const vikunjaUrl = `https://vikunja.jacobsteward.me/tasks/${task.id}`
+  const vikunjaUrl = `${VIKUNJA_BASE_URL}/tasks/${task.id}`
 
   // Don't show swipe visuals when dragging via dnd-kit
   const effectiveSwipeX = isDragging ? 0 : swipeX

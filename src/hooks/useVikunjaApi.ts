@@ -55,7 +55,7 @@ export function useVikunjaApi() {
     return task
   }, [])
 
-  const updateTask = useCallback(async (id: number, payload: UpdateTaskPayload) => {
+  const updateTaskRaw = useCallback(async (id: number, payload: UpdateTaskPayload) => {
     const task = await apiFetch<VikunjaTask>(`/tasks/${id}`, {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -63,6 +63,21 @@ export function useVikunjaApi() {
     setTasks(prev => prev.map(t => t.id === id ? task : t))
     return task
   }, [])
+
+  /** Read-modify-write update that preserves fields the caller does not touch.
+   *  Vikunja POST /tasks/{id} replaces the full resource, so partial updates
+   *  silently clear omitted fields (e.g. due_date). */
+  const updateTask = useCallback(async (current: VikunjaTask, patch: UpdateTaskPayload) => {
+    const merged: UpdateTaskPayload = {
+      title: current.title,
+      done: current.done,
+      due_date: current.due_date,
+      project_id: current.project_id,
+      description: current.description,
+      ...patch,
+    }
+    return updateTaskRaw(current.id, merged)
+  }, [updateTaskRaw])
 
   const addLabelToTask = useCallback(async (taskId: number, labelId: number) => {
     await apiFetch(`/tasks/${taskId}/labels`, {

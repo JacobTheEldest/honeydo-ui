@@ -27,9 +27,7 @@ import {
   rebalancePositions,
   getTopPosition,
 } from './utils/ordering.ts'
-
-const HONEYDO_LABEL = 'Honey-Do'
-const DEFAULT_PROJECT_ID = 1 // Inbox
+import { HONEYDO_LABEL, DEFAULT_PROJECT_ID } from './config.ts'
 
 export default function App() {
   const {
@@ -96,7 +94,7 @@ export default function App() {
       if (needsRebalance(positions)) {
         const fresh = rebalancePositions(reordered.length)
         reordered.forEach((task, i) => {
-          updateTask(task.id, { due_date: positionToDueDate(fresh[i]) })
+          updateTask(task, { due_date: positionToDueDate(fresh[i]) })
         })
       } else {
         // Use midpoint for the moved task
@@ -112,7 +110,7 @@ export default function App() {
           const nextPos = dueDateToPosition(reordered[newIndex + 1].due_date)
           newPos = getMidpointPosition(prevPos, nextPos)
         }
-        updateTask(movedTask.id, { due_date: positionToDueDate(newPos) })
+        updateTask(movedTask, { due_date: positionToDueDate(newPos) })
       }
     },
     [honeyDoTasks, updateTask]
@@ -120,16 +118,18 @@ export default function App() {
 
   const handleToggleDone = useCallback(
     (id: number, done: boolean) => {
-      updateTask(id, { done })
+      const task = honeyDoTasks.find((t) => t.id === id)
+      if (task) updateTask(task, { done })
     },
-    [updateTask]
+    [honeyDoTasks, updateTask]
   )
 
   const handleUpdateTitle = useCallback(
     (id: number, title: string) => {
-      updateTask(id, { title })
+      const task = honeyDoTasks.find((t) => t.id === id)
+      if (task) updateTask(task, { title })
     },
-    [updateTask]
+    [honeyDoTasks, updateTask]
   )
 
   const handleCreateTask = useCallback(

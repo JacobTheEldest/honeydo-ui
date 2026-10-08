@@ -12,6 +12,10 @@ export default defineConfig({
         target: 'http://localhost:3000',
         changeOrigin: true,
       },
+      '/config.js': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
     },
   },
   build: {

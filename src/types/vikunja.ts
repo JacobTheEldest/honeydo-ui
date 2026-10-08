@@ -25,7 +25,7 @@ export interface CreateTaskPayload {
 export interface UpdateTaskPayload {
   title?: string
   done?: boolean
-  due_date?: string
+  due_date?: string | null
   project_id?: number
   description?: string
 }
