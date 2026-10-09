@@ -47,9 +47,9 @@ app.get('/health', (_req, res) => {
 // API proxy - forward all /api/v1/* to Vikunja with auth header
 app.use('/api/v1', async (req, res) => {
   const upstreamUrl = `${upstreamBase}/api/v1${req.url}`
+  const start = Date.now()
 
   const headers = new Headers()
-  // Copy safe headers from client
   const copyHeaders = ['content-type', 'accept', 'accept-encoding']
   for (const h of copyHeaders) {
     const val = req.headers[h]
@@ -75,6 +75,9 @@ app.use('/api/v1', async (req, res) => {
       duplex: 'half',
     })
 
+    const duration = Date.now() - start
+    console.log(`[PROXY] ${req.method} ${req.url} -> ${upstreamRes.status} (${duration}ms)`)
+
     res.status(upstreamRes.status)
     upstreamRes.headers.forEach((value, key) => {
       if (!['content-encoding', 'transfer-encoding'].includes(key.toLowerCase())) {
@@ -92,7 +95,8 @@ app.use('/api/v1', async (req, res) => {
     }
     res.end()
   } catch (err) {
-    console.error('Proxy error:', err)
+    const duration = Date.now() - start
+    console.error(`[PROXY] ${req.method} ${req.url} -> ERROR (${duration}ms):`, err)
     res.status(502).json({ error: 'Proxy error', message: String(err) })
   }
 })

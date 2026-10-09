@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { DEFAULT_PROJECT_ID } from '../config.ts'
 import type { VikunjaTask, VikunjaLabel, CreateTaskPayload, UpdateTaskPayload } from '../types/vikunja.ts'
 
 const API_BASE = '/api/v1'
@@ -34,8 +35,9 @@ export function useVikunjaApi() {
     setLoading(true)
     setError(null)
     try {
-      // v2.5.0 label filtering is broken; fetch all tasks and filter client-side
-      const data = await apiFetch<VikunjaTask[]>('/tasks?per_page=200&page=1')
+      // v2.5.0: GET /tasks does NOT include labels on tasks.
+      // GET /projects/{id}/tasks DOES include labels.
+      const data = await apiFetch<VikunjaTask[]>(`/projects/${DEFAULT_PROJECT_ID}/tasks?per_page=200`)
       setTasks(data)
       return data
     } catch (e) {
