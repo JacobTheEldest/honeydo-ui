@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import { DEFAULT_PROJECT_ID } from '../config.ts'
 import type { VikunjaTask, VikunjaLabel, CreateTaskPayload, UpdateTaskPayload } from '../types/vikunja.ts'
 
 const API_BASE = '/api/v1'
@@ -37,9 +36,19 @@ export function useVikunjaApi() {
     try {
       // v2.5.0: GET /tasks does NOT include labels on tasks.
       // GET /projects/{id}/tasks DOES include labels.
-      const data = await apiFetch<VikunjaTask[]>(`/projects/${DEFAULT_PROJECT_ID}/tasks?per_page=200`)
-      setTasks(data)
-      return data
+      // Honey-Do tasks can be in any project, so fetch from all projects.
+      const projects = await apiFetch<{ id: number; title: string }[]>('/projects?per_page=200')
+      const allTasks: VikunjaTask[] = []
+      for (const p of projects) {
+        try {
+          const tasks = await apiFetch<VikunjaTask[]>(`/projects/${p.id}/tasks?per_page=200`)
+          allTasks.push(...tasks)
+        } catch {
+          // Skip projects we can't read
+        }
+      }
+      setTasks(allTasks)
+      return allTasks
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to fetch tasks')
       throw e
