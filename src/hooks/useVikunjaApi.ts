@@ -36,10 +36,13 @@ export function useVikunjaApi() {
     try {
       // v2.5.0: GET /tasks does NOT include labels on tasks.
       // GET /projects/{id}/tasks DOES include labels.
-      // Honey-Do tasks can be in any project, so fetch from all projects.
+      // Honey-Do tasks can be in any project, so fetch from all real projects.
+      // Skip system views (negative IDs like -1 Favorites, -2 Prioritized, etc.)
+      // which are virtual collections containing the same tasks.
       const projects = await apiFetch<{ id: number; title: string }[]>('/projects?per_page=200')
       const allTasks: VikunjaTask[] = []
       for (const p of projects) {
+        if (p.id < 0) continue // Skip system views
         try {
           const tasks = await apiFetch<VikunjaTask[]>(`/projects/${p.id}/tasks?per_page=200`)
           allTasks.push(...tasks)
