@@ -53,7 +53,7 @@ app.use(
 )
 
 // Serve static files
-const distPath = path.resolve(__dirname, '../dist')
+const distPath = path.resolve(__dirname, '../../dist')
 app.use(express.static(distPath))
 
 // SPA fallback
