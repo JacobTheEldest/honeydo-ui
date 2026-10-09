@@ -15,7 +15,6 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@use-gesture/react": "^10.3.1",
     "express": "^5.2.1",
-    "http-proxy-middleware": "^4.2.0",
     "lucide-react": "^1.53.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
