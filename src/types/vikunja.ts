@@ -3,6 +3,18 @@ export interface VikunjaLabel {
   title: string
 }
 
+export interface VikunjaRelatedTaskRef {
+  id: number
+  title: string
+}
+
+export interface VikunjaRelatedTasks {
+  subtask?: VikunjaRelatedTaskRef[]
+  parenttask?: VikunjaRelatedTaskRef[]
+  blocking?: VikunjaRelatedTaskRef[]
+  blocked?: VikunjaRelatedTaskRef[]
+}
+
 export interface VikunjaTask {
   id: number
   title: string
@@ -14,6 +26,7 @@ export interface VikunjaTask {
   labels: VikunjaLabel[]
   created: string
   updated: string
+  related_tasks?: VikunjaRelatedTasks
 }
 
 export interface CreateTaskPayload {

@@ -2,12 +2,18 @@ import { useState, useCallback } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useDrag } from '@use-gesture/react'
-import { ExternalLink, Check, GripVertical } from 'lucide-react'
+import { ExternalLink, Check, GripVertical, ChevronRight, ChevronDown } from 'lucide-react'
 import { VIKUNJA_BASE_URL } from '../config.ts'
 import type { VikunjaTask } from '../types/vikunja.ts'
 
 interface TaskItemProps {
   task: VikunjaTask
+  /** Globally-unique id for useSortable — `${parentScope}::${taskId}`. */
+  sortableId: string
+  depth: number
+  hasChildren: boolean
+  collapsed: boolean
+  onToggleCollapse: (taskId: number) => void
   onToggleDone: (id: number, done: boolean) => void
   onUpdateTitle: (id: number, title: string) => void
   showCompleted: boolean
@@ -15,6 +21,11 @@ interface TaskItemProps {
 
 export default function TaskItem({
   task,
+  sortableId,
+  depth,
+  hasChildren,
+  collapsed,
+  onToggleCollapse,
   onToggleDone,
   onUpdateTitle,
   showCompleted,
@@ -31,11 +42,13 @@ export default function TaskItem({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: task.id })
+  } = useSortable({ id: sortableId })
 
+  // DnD transition glitch fix: only animate the actively-dragged item. Other
+  // items snap to their new positions instead of "settling".
   const dndStyle = {
     transform: CSS.Transform.toString(transform),
-    transition,
+    transition: isDragging ? transition : undefined,
   }
 
   // Swipe gesture for mobile complete
@@ -94,10 +107,12 @@ export default function TaskItem({
   const showCompleteBg = effectiveSwipeX < -40 && !task.done
   const showUndoBg = effectiveSwipeX < -40 && task.done
 
+  const indentPx = depth * 16
+
   return (
     <div
       ref={setNodeRef}
-      style={dndStyle}
+      style={{ ...dndStyle, paddingLeft: indentPx }}
       className={`
         relative overflow-hidden
         ${task.done && !showCompleted ? 'hidden' : ''}
@@ -125,10 +140,27 @@ export default function TaskItem({
           opacity: isDragging ? 0.5 : 1,
         }}
         className="
-          relative flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-100
+          relative flex items-center gap-2 px-4 py-3 bg-white border-b border-gray-100
           touch-none select-none
         "
       >
+        {/* Fold caret (only when this task has children) */}
+        {hasChildren ? (
+          <button
+            onClick={() => onToggleCollapse(task.id)}
+            className="text-gray-400 hover:text-gray-600 shrink-0 p-0.5 -ml-1"
+            aria-label={collapsed ? 'Expand subtasks' : 'Collapse subtasks'}
+          >
+            {collapsed ? (
+              <ChevronRight className="w-4 h-4" />
+            ) : (
+              <ChevronDown className="w-4 h-4" />
+            )}
+          </button>
+        ) : (
+          <span className="w-4 shrink-0" aria-hidden="true" />
+        )}
+
         {/* Drag handle */}
         <button
           {...attributes}

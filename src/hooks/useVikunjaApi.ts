@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { VikunjaTask, VikunjaLabel, CreateTaskPayload, UpdateTaskPayload } from '../types/vikunja.ts'
+import { HONEYDO_LABEL } from '../config.ts'
 
 const API_BASE = '/api/v1'
+const DETAIL_CONCURRENCY = 8
+const MAX_SUBTASK_DEPTH = 8
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -18,6 +21,25 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/** Run a list of promise-producing functions with a fixed concurrency cap. */
+async function runWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const i = next++
+      if (i >= items.length) return
+      results[i] = await fn(items[i])
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
 export function useVikunjaApi() {
   const [labels, setLabels] = useState<VikunjaLabel[]>([])
   const [tasks, setTasks] = useState<VikunjaTask[]>([])
@@ -29,6 +51,59 @@ export function useVikunjaApi() {
     setLabels(data)
     return data
   }, [])
+
+  const fetchTaskDetail = useCallback(async (id: number): Promise<VikunjaTask> => {
+    return apiFetch<VikunjaTask>(`/tasks/${id}`)
+  }, [])
+
+  /**
+   * Walk subtask references reachable from any task in `seed`, following
+   * related_tasks.subtask links. Depth is bounded and visited-set guarded so
+   * cycles cannot spin. Each discovered task detail is merged into `sink`
+   * (keyed by id) and the function returns the set of newly-discovered ids.
+   */
+  const collectSubtaskDetails = useCallback(
+    async (seed: VikunjaTask[], sink: Map<number, VikunjaTask>): Promise<Set<number>> => {
+      const reachable = new Set<number>()
+      const queue: number[] = []
+      for (const t of seed) {
+        const subs = t.related_tasks?.subtask ?? []
+        for (const r of subs) {
+          if (!sink.has(r.id) && !reachable.has(r.id) && !queue.includes(r.id)) {
+            queue.push(r.id)
+          }
+        }
+      }
+      let depth = 0
+      while (queue.length > 0 && depth < MAX_SUBTASK_DEPTH) {
+        const batch = queue.splice(0, queue.length)
+        const missing = batch.filter((id) => !sink.has(id) && !reachable.has(id))
+        if (missing.length === 0) {
+          depth++
+          continue
+        }
+        const details = await runWithConcurrency(missing, DETAIL_CONCURRENCY, (id) =>
+          fetchTaskDetail(id).catch(() => null)
+        )
+        const nextQueue: number[] = []
+        for (const d of details) {
+          if (!d) continue
+          sink.set(d.id, d)
+          reachable.add(d.id)
+          const subs = d.related_tasks?.subtask ?? []
+          for (const s of subs) {
+            if (!sink.has(s.id) && !reachable.has(s.id) && !nextQueue.includes(s.id)) {
+              nextQueue.push(s.id)
+            }
+          }
+        }
+        queue.push(...nextQueue)
+        depth++
+      }
+      return reachable
+    },
+    [fetchTaskDetail]
+  )
 
   const fetchTasks = useCallback(async () => {
     setLoading(true)
@@ -51,6 +126,23 @@ export function useVikunjaApi() {
           // Skip projects we can't read
         }
       }
+      const seed = Array.from(seen.values())
+
+      // Honey-Do roots need their full detail to expose related_tasks.{subtask,parenttask}.
+      const honeyDoIds = seed
+        .filter((t) => t.labels?.some((l) => l.title === HONEYDO_LABEL))
+        .map((t) => t.id)
+      const honeyDoDetails = await runWithConcurrency(honeyDoIds, DETAIL_CONCURRENCY, (id) =>
+        fetchTaskDetail(id).catch(() => null)
+      )
+      for (const d of honeyDoDetails) {
+        if (d) seen.set(d.id, d)
+      }
+      const enrichedSeed = Array.from(seen.values())
+
+      // Walk subtask links out to a bounded depth and fetch their details too.
+      await collectSubtaskDetails(enrichedSeed, seen)
+
       const allTasks = Array.from(seen.values())
       setTasks(allTasks)
       return allTasks
@@ -60,7 +152,7 @@ export function useVikunjaApi() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [collectSubtaskDetails, fetchTaskDetail])
 
   const createTask = useCallback(async (payload: CreateTaskPayload) => {
     const task = await apiFetch<VikunjaTask>(`/projects/${payload.project_id}/tasks`, {
