@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef, Fragment, type ReactNode } from 'react'
 import { useDrag } from '@use-gesture/react'
 import {
   DndContext,
@@ -98,17 +98,6 @@ export default function App() {
     for (const r of taskTree) visit(r, false)
     return hidden
   }, [taskTree, showCompleted])
-
-  // Map id -> tree node for O(1) children lookups while rendering.
-  const treeById = useMemo<Map<number, TaskTreeNode>>(() => {
-    const m = new Map<number, TaskTreeNode>()
-    const visit = (n: TaskTreeNode): void => {
-      m.set(n.id, n)
-      for (const c of n.children) visit(c)
-    }
-    for (const r of taskTree) visit(r)
-    return m
-  }, [taskTree])
 
   const byId = useMemo<Map<number, import('./types/vikunja.ts').VikunjaTask>>(() => {
     const m = new Map<number, import('./types/vikunja.ts').VikunjaTask>()
@@ -319,6 +308,42 @@ export default function App() {
 
   const allCollapsed = collapsed.size > 0
 
+  // Recursive tree walker: renders each sibling group in its own
+  // <SortableContext>, then immediately recurses into each node's children.
+  // This keeps subtasks directly beneath their parent, in tree order.
+  const renderNodes = (nodes: TaskTreeNode[], parentScope: ParentScope): ReactNode => {
+    const visible = nodes.filter((n) => !hiddenByAncestor.has(n.id))
+    if (visible.length === 0) return null
+    return (
+      <SortableContext
+        key={String(parentScope)}
+        items={visible.map((n) => encodeGroupItemId(parentScope, n.id))}
+        strategy={verticalListSortingStrategy}
+      >
+        {visible.map((node) => {
+          const isCollapsed = collapsed.has(node.id)
+          return (
+            <Fragment key={`${parentScope}:${node.id}`}>
+              <TaskItem
+                task={node}
+                sortableId={encodeGroupItemId(parentScope, node.id)}
+                depth={node.depth}
+                hasChildren={node.children.length > 0}
+                collapsed={isCollapsed}
+                onToggleCollapse={handleToggleCollapse}
+                onToggleDone={handleToggleDone}
+                onUpdateTitle={handleUpdateTitle}
+                showCompleted={showCompleted}
+              />
+              {!isCollapsed && node.children.length > 0 &&
+                renderNodes(node.children, node.id)}
+            </Fragment>
+          )
+        })}
+      </SortableContext>
+    )
+  }
+
   return (
     <div className="min-h-svh bg-white dark:bg-gray-900">
       {/* Header */}
@@ -417,45 +442,7 @@ export default function App() {
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
         >
-          {groups.map((g) => {
-            // A child group is hidden if its parent is collapsed or its
-            // parent (or any ancestor) is `done && !showCompleted`.
-            const parentHidden = typeof g.parent === 'number' && (
-              collapsed.has(g.parent) || hiddenByAncestor.has(g.parent)
-            )
-            if (parentHidden) return null
-            // Items the SortableContext should track: exclude rows that are
-            // hidden-by-done so dnd-kit does not see a stale id whose
-            // useSortable is not mounted.
-            const visibleItems = g.items.filter((id) => !hiddenByAncestor.has(id))
-            if (visibleItems.length === 0) return null
-            return (
-              <SortableContext
-                key={String(g.parent)}
-                items={visibleItems.map((id) => encodeGroupItemId(g.parent, id))}
-                strategy={verticalListSortingStrategy}
-              >
-                {visibleItems.map((id) => {
-                  const node = treeById.get(id)
-                  if (!node) return null
-                  return (
-                    <TaskItem
-                      key={`${g.parent}::${id}`}
-                      task={node}
-                      sortableId={encodeGroupItemId(g.parent, id)}
-                      depth={node.depth}
-                      hasChildren={node.children.length > 0}
-                      collapsed={collapsed.has(id)}
-                      onToggleCollapse={handleToggleCollapse}
-                      onToggleDone={handleToggleDone}
-                      onUpdateTitle={handleUpdateTitle}
-                      showCompleted={showCompleted}
-                    />
-                  )
-                })}
-              </SortableContext>
-            )
-          })}
+          {renderNodes(taskTree, ROOT_PARENT)}
         </DndContext>
       </main>
 
