@@ -281,6 +281,11 @@ export default function App() {
         // Only enable pull-to-refresh when scrolled to top
         const el = mainRef.current
         if (el && el.scrollTop > 0) return
+
+        // Don't trigger pull-to-refresh when the touch started on a drag
+        // handle — let dnd-kit handle that gesture instead.
+        const target = state.target as Element | null
+        if (target?.closest('.cursor-grab')) return
       }
 
       if (last) {
