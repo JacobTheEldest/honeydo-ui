@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useDrag } from '@use-gesture/react'
 import {
   DndContext,
   closestCenter,
@@ -16,8 +17,9 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown } from 'lucide-react'
+import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown, Sun, Moon } from 'lucide-react'
 import { useVikunjaApi } from './hooks/useVikunjaApi.ts'
+import { useDarkMode } from './hooks/useDarkMode.ts'
 import TaskItem from './components/TaskItem.tsx'
 import FAB from './components/FAB.tsx'
 import {
@@ -52,6 +54,7 @@ export default function App() {
     createLabel,
   } = useVikunjaApi()
 
+  const { dark, toggle: toggleDarkMode } = useDarkMode()
   const [showCompleted, setShowCompleted] = useState(false)
   const [honeyDoLabelId, setHoneyDoLabelId] = useState<number | null>(null)
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set())
@@ -274,18 +277,65 @@ export default function App() {
     })
   )
 
+  // Pull-to-refresh on mobile
+  const mainRef = useRef<HTMLElement>(null)
+  const [pullDistance, setPullDistance] = useState(0)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const pullThreshold = 72
+
+  const bindPull = useDrag(
+    (state) => {
+      const { offset, last, first } = state
+      const [, dy] = offset
+
+      if (first) {
+        // Only enable pull-to-refresh when scrolled to top
+        const el = mainRef.current
+        if (el && el.scrollTop > 0) return
+      }
+
+      if (last) {
+        if (dy >= pullThreshold && !isRefreshing) {
+          setIsRefreshing(true)
+          fetchTasks().catch(() => {}).finally(() => {
+            setIsRefreshing(false)
+          })
+        }
+        setPullDistance(0)
+      } else {
+        // Dampen the pull: move at 1/3 speed, only downward
+        const dampened = Math.max(0, dy / 3)
+        setPullDistance(dampened)
+      }
+    },
+    {
+      axis: 'y',
+      from: () => [0, pullDistance],
+      filterTaps: true,
+      preventScroll: true,
+      pointer: { touch: true },
+    }
+  )
+
   const allCollapsed = collapsed.size > 0
 
   return (
-    <div className="min-h-svh bg-white">
+    <div className="min-h-svh bg-white dark:bg-gray-900">
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-gray-100 px-4 py-3">
+      <header className="sticky top-0 z-40 bg-white/90 dark:bg-gray-800/90 backdrop-blur border-b border-gray-100 dark:border-gray-700 px-4 py-3">
         <div className="flex items-center justify-between max-w-xl mx-auto">
           <h1 className="text-xl font-semibold text-honey-dark">HoneyDo</h1>
           <div className="flex items-center gap-1">
             <button
+              onClick={toggleDarkMode}
+              className="flex items-center justify-center w-8 h-8 text-gray-500 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-100 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
+              aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {dark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </button>
+            <button
               onClick={allCollapsed ? handleExpandAll : handleCollapseAll}
-              className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-50"
+              className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
               aria-label={allCollapsed ? 'Expand all' : 'Collapse all'}
             >
               {allCollapsed ? (
@@ -300,7 +350,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setShowCompleted(!showCompleted)}
-              className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-50"
+              className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
             >
               {showCompleted ? (
                 <>
@@ -317,17 +367,32 @@ export default function App() {
       </header>
 
       {/* Task list */}
-      <main className="max-w-xl mx-auto pb-24">
+      <main
+        ref={mainRef}
+        className="max-w-xl mx-auto pb-24 overscroll-none"
+        style={{ transform: `translateY(${pullDistance}px)` }}
+        {...bindPull()}
+      >
+        <div
+          className="flex justify-center transition-all duration-200"
+          style={{ height: isRefreshing ? 40 : pullDistance > 0 ? pullDistance : 0 }}
+        >
+          {(pullDistance > 0 || isRefreshing) && (
+            <Loader2
+              className={`w-5 h-5 text-honey animate-spin mt-3 ${isRefreshing ? 'opacity-100' : 'opacity-60'}`}
+            />
+          )}
+        </div>
         {loading && tasks.length === 0 && (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="w-6 h-6 text-honey animate-spin" />
-            <span className="ml-2 text-gray-500">Loading tasks...</span>
+            <span className="ml-2 text-gray-500 dark:text-gray-400">Loading tasks...</span>
           </div>
         )}
 
         {error && (
           <div className="px-4 py-8 text-center">
-            <p className="text-red-500">{error}</p>
+            <p className="text-red-500 dark:text-red-400">{error}</p>
             <button
               onClick={() => fetchTasks()}
               className="mt-2 text-honey hover:underline"
@@ -339,8 +404,8 @@ export default function App() {
 
         {!loading && !error && taskTree.length === 0 && (
           <div className="px-4 py-20 text-center">
-            <p className="text-gray-400 text-lg">No Honey-Do tasks yet</p>
-            <p className="text-gray-400 text-sm mt-1">
+            <p className="text-gray-400 dark:text-gray-500 text-lg">No Honey-Do tasks yet</p>
+            <p className="text-gray-400 dark:text-gray-500 text-sm mt-1">
               Tap the + button to add one
             </p>
           </div>

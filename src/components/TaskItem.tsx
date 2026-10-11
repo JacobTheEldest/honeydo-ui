@@ -123,12 +123,12 @@ export default function TaskItem({
         className={`
           absolute inset-0 flex items-center justify-end pr-6
           transition-colors duration-100
-          ${showCompleteBg ? 'bg-green-100' : ''}
-          ${showUndoBg ? 'bg-amber-100' : ''}
+          ${showCompleteBg ? 'bg-green-100 dark:bg-green-900' : ''}
+          ${showUndoBg ? 'bg-amber-100 dark:bg-amber-900' : ''}
         `}
       >
-        {showCompleteBg && <Check className="w-6 h-6 text-green-600" />}
-        {showUndoBg && <span className="text-amber-600 text-sm font-medium">Undo</span>}
+        {showCompleteBg && <Check className="w-6 h-6 text-green-600 dark:text-green-400" />}
+        {showUndoBg && <span className="text-amber-600 dark:text-amber-400 text-sm font-medium">Undo</span>}
       </div>
 
       {/* Main row */}
@@ -140,7 +140,7 @@ export default function TaskItem({
           opacity: isDragging ? 0.5 : 1,
         }}
         className="
-          relative flex items-center gap-2 px-4 py-3 bg-white border-b border-gray-100
+          relative flex items-center gap-2 px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700
           touch-none select-none
         "
       >
@@ -148,7 +148,7 @@ export default function TaskItem({
         {hasChildren ? (
           <button
             onClick={() => onToggleCollapse(task.id)}
-            className="text-gray-400 hover:text-gray-600 shrink-0 p-0.5 -ml-1"
+            className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 shrink-0 p-0.5 -ml-1"
             aria-label={collapsed ? 'Expand subtasks' : 'Collapse subtasks'}
           >
             {collapsed ? (
@@ -165,7 +165,7 @@ export default function TaskItem({
         <button
           {...attributes}
           {...listeners}
-          className="text-gray-300 cursor-grab active:cursor-grabbing shrink-0 p-1 touch-none"
+          className="text-gray-300 dark:text-gray-600 cursor-grab active:cursor-grabbing shrink-0 p-1 touch-none"
           aria-label="Drag to reorder"
         >
           <GripVertical className="w-5 h-5" />
@@ -181,14 +181,14 @@ export default function TaskItem({
               onBlur={handleSave}
               onKeyDown={handleKeyDown}
               autoFocus
-              className="w-full px-2 py-1 text-base border border-honey rounded focus:outline-none focus:ring-2 focus:ring-honey/50"
+              className="w-full px-2 py-1 text-base border border-honey rounded focus:outline-none focus:ring-2 focus:ring-honey/50 dark:bg-gray-700 dark:text-gray-200 dark:border-honey-dark"
             />
           ) : (
             <button
               onClick={() => setEditing(true)}
               className={`
                 w-full text-left text-base truncate
-                ${task.done ? 'line-through text-gray-400' : 'text-gray-800'}
+                ${task.done ? 'line-through text-gray-400 dark:text-gray-500' : 'text-gray-800 dark:text-gray-200'}
               `}
             >
               {task.title}
@@ -203,8 +203,8 @@ export default function TaskItem({
             className={`
               w-8 h-8 rounded-full flex items-center justify-center
               ${task.done
-                ? 'bg-green-100 text-green-600'
-                : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                ? 'bg-green-100 dark:bg-green-900 text-green-600 dark:text-green-400'
+                : 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
               }
             `}
             aria-label={task.done ? 'Mark incomplete' : 'Mark complete'}
@@ -215,7 +215,7 @@ export default function TaskItem({
             href={vikunjaUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 hover:bg-gray-200"
+            className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600"
             onClick={(e) => e.stopPropagation()}
             aria-label="Open in Vikunja"
           >

@@ -1,9 +1,18 @@
 @import "tailwindcss";
 
+@variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-honey: #f59e0b;
   --color-honey-dark: #d97706;
   --color-honey-light: #fef3c7;
+}
+
+:root {
+  color-scheme: light;
+}
+.dark {
+  color-scheme: dark;
 }
 
 body {
@@ -13,12 +22,22 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+.dark body,
+body.dark {
+  background: #111827;
+}
+
 #root {
   min-height: 100svh;
   max-width: 600px;
   margin: 0 auto;
   background: white;
   box-shadow: 0 0 20px rgba(0,0,0,0.05);
+}
+
+.dark #root {
+  background: #1f2937;
+  box-shadow: 0 0 20px rgba(0,0,0,0.4);
 }
 
 @media (min-width: 601px) {

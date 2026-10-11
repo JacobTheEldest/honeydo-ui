@@ -24,7 +24,7 @@ export default function FAB({ onCreate }: FABProps) {
       {open && (
         <form
           onSubmit={handleSubmit}
-          className="absolute bottom-16 right-0 w-72 bg-white rounded-xl shadow-lg border border-gray-200 p-4"
+          className="absolute bottom-16 right-0 w-72 bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-600 p-4"
         >
           <input
             type="text"
@@ -32,13 +32,13 @@ export default function FAB({ onCreate }: FABProps) {
             onChange={(e) => setValue(e.target.value)}
             placeholder="New task..."
             autoFocus
-            className="w-full px-3 py-2 text-base border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-honey/50"
+            className="w-full px-3 py-2 text-base border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-honey/50 dark:bg-gray-700 dark:text-gray-200"
           />
           <div className="flex justify-end gap-2 mt-3">
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700"
+              className="px-3 py-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
             >
               Cancel
             </button>

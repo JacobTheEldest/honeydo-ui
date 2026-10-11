@@ -195,7 +195,18 @@ export function useVikunjaApi() {
       method: 'PUT',
       body: JSON.stringify({ label_id: labelId }),
     })
-  }, [])
+    // Merge the label into the task in local state so buildTree picks it up
+    // without waiting for a full fetchTasks() refresh.
+    const label = labels.find((l) => l.id === labelId)
+    if (!label) return
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.id !== taskId) return t
+        if (t.labels?.some((l) => l.id === labelId)) return t
+        return { ...t, labels: [...(t.labels ?? []), label] }
+      })
+    )
+  }, [labels])
 
   const createLabel = useCallback(async (title: string) => {
     const label = await apiFetch<VikunjaLabel>('/labels', {
