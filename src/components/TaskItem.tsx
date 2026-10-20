@@ -165,6 +165,7 @@ export default function TaskItem({
         <button
           {...attributes}
           {...listeners}
+          data-drag-handle
           className="text-gray-300 dark:text-gray-600 cursor-grab active:cursor-grabbing shrink-0 p-1 touch-none"
           aria-label="Drag to reorder"
         >

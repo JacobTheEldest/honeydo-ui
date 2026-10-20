@@ -285,7 +285,7 @@ export default function App() {
         // Don't trigger pull-to-refresh when the touch started on a drag
         // handle — let dnd-kit handle that gesture instead.
         const target = state.target as Element | null
-        if (target?.closest('.cursor-grab')) return
+        if (target?.closest('[data-drag-handle]')) return
       }
 
       if (last) {
