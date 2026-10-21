@@ -271,6 +271,7 @@ export default function App() {
   const [pullDistance, setPullDistance] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const pullThreshold = 72
+  const pullStartedOnDragHandle = useRef(false)
 
   const bindPull = useDrag(
     (state) => {
@@ -278,14 +279,29 @@ export default function App() {
       const [, dy] = offset
 
       if (first) {
-        // Only enable pull-to-refresh when scrolled to top
-        const el = mainRef.current
-        if (el && el.scrollTop > 0) return
+        // state.target is the element bound to the gesture, not necessarily
+        // the original touch target. Inspect the event target and composed
+        // path so touches that begin on the handle's child SVG are excluded.
+        const event = state.event
+        const eventTarget = event.target
+        const startedOnHandle =
+          (eventTarget instanceof Element && eventTarget.closest('[data-drag-handle]') !== null) ||
+          (typeof event.composedPath === 'function' &&
+            event.composedPath().some(
+              (target) => target instanceof Element && target.closest('[data-drag-handle]') !== null
+            ))
+        pullStartedOnDragHandle.current = startedOnHandle
 
-        // Don't trigger pull-to-refresh when the touch started on a drag
-        // handle — let dnd-kit handle that gesture instead.
-        const target = state.target as Element | null
-        if (target?.closest('[data-drag-handle]')) return
+        // Only enable pull-to-refresh when scrolled to top.
+        const el = mainRef.current
+        if (!pullStartedOnDragHandle.current && el && el.scrollTop > 0) return
+      }
+
+      // Keep the entire gesture out of pull-to-refresh after a handle start;
+      // dnd-kit remains responsible for the same touch sequence.
+      if (pullStartedOnDragHandle.current) {
+        if (last) pullStartedOnDragHandle.current = false
+        return
       }
 
       if (last) {
