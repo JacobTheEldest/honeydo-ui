@@ -1,8 +1,10 @@
 import { useEffect, useState, useCallback, useMemo, useRef, Fragment, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useDrag } from '@use-gesture/react'
 import {
   DndContext,
   DragOverlay,
+  useDroppable,
   closestCenter,
   pointerWithin,
   KeyboardSensor,
@@ -16,7 +18,6 @@ import {
   type CollisionDetection,
 } from '@dnd-kit/core'
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
@@ -44,7 +45,32 @@ import {
   type TaskTreeNode,
   type ParentScope,
 } from './utils/taskTree.ts'
+import { canPromoteToRoot, isSelfOrDescendant, reorderAtDropEdge } from './utils/hierarchyMutations.ts'
 import { HONEYDO_LABEL, DEFAULT_PROJECT_ID } from './config.ts'
+
+const ROOT_DROP_ID = 'root-promote'
+type ReorderDrop = { taskId: number; edge: 'before' | 'after' } | null
+
+function RootPromotionDropTarget({ visible }: { visible: boolean }) {
+  const { setNodeRef, isOver } = useDroppable({ id: ROOT_DROP_ID })
+  return createPortal(
+    <div
+      ref={setNodeRef}
+      data-root-drop-target
+      aria-hidden={!visible}
+      className={`fixed bottom-20 left-1/2 z-50 flex min-h-12 w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 items-center justify-center rounded-lg border-2 border-dashed px-3 text-sm shadow-lg transition-colors ${
+        visible ? 'visible opacity-100' : 'invisible pointer-events-none opacity-0'
+      } ${
+        isOver
+          ? 'border-honey bg-honey/15 text-honey-dark dark:bg-honey/20'
+          : 'border-gray-300 text-gray-500 dark:border-gray-600 dark:text-gray-400'
+      }`}
+    >
+      Drop here to make a top-level task
+    </div>,
+    document.body
+  )
+}
 
 export default function App() {
   const {
@@ -56,6 +82,7 @@ export default function App() {
     createTask,
     updateTask,
     persistTaskOrdering,
+    changeTaskParent,
     addLabelToTask,
     createLabel,
   } = useVikunjaApi()
@@ -65,6 +92,10 @@ export default function App() {
   const [honeyDoLabelId, setHoneyDoLabelId] = useState<number | null>(null)
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set())
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null)
+  const [reorderDrop, setReorderDrop] = useState<ReorderDrop>(null)
+  const reorderDropRef = useRef<ReorderDrop>(null)
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dragStartRectsRef = useRef<Map<string, DOMRectReadOnly>>(new Map())
   const lastCollisionIdRef = useRef<string | null>(null)
 
@@ -167,7 +198,19 @@ export default function App() {
       return collisions
     }
 
+    const specialHits = pointerWithin(args)
+    const rootHits = specialHits.filter((collision) => String(collision.id) === ROOT_DROP_ID)
+    if (rootHits.length > 0) return remember(rootHits)
+
     const active = decodeGroupItemId(String(args.active.id))
+    const nestHits = specialHits.filter((collision) => {
+      const id = String(collision.id)
+      if (!id.startsWith('nest::')) return false
+      const targetId = Number(id.slice('nest::'.length))
+      return Number.isFinite(targetId)
+    })
+    if (nestHits.length > 0) return remember(nestHits)
+
     if (!active) return remember(closestCenter(args))
 
     const isSameScope = (id: string | number) => {
@@ -201,6 +244,16 @@ export default function App() {
   }, [])
 
   // Stable handlers
+  const notify = useCallback((message: string) => {
+    setToastMessage(message)
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current)
+    toastTimeoutRef.current = setTimeout(() => setToastMessage(null), 4000)
+  }, [])
+
+  useEffect(() => () => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current)
+  }, [])
+
   const handleToggleCollapse = useCallback((taskId: number) => {
     setCollapsed((prev) => {
       const next = new Set(prev)
@@ -256,19 +309,49 @@ export default function App() {
     })
     dragStartRectsRef.current = rects
     lastCollisionIdRef.current = null
+    reorderDropRef.current = null
+    setReorderDrop(null)
     setActiveTaskId(decoded?.taskId ?? null)
   }, [])
 
   const handleDragCancel = useCallback(() => {
     dragStartRectsRef.current.clear()
     lastCollisionIdRef.current = null
+    reorderDropRef.current = null
+    setReorderDrop(null)
     setActiveTaskId(null)
   }, [])
 
   const handleDragOver = useCallback(
-    (_event: DragOverEvent) => {
-      // Cross-scope drops remain visible as foreign collisions and are rejected
-      // by handleDragEnd; the active item never changes groups mid-drag.
+    (event: DragOverEvent) => {
+      const overId = event.over ? String(event.over.id) : ''
+      if (!event.over || !overId || overId === ROOT_DROP_ID || overId.startsWith('nest::')) {
+        reorderDropRef.current = null
+        setReorderDrop(null)
+        return
+      }
+      const overTarget = event.over
+      const active = decodeGroupItemId(String(event.active.id))
+      const over = decodeGroupItemId(overId)
+      if (!active || !over || active.parent !== over.parent || active.taskId === over.taskId) {
+        reorderDropRef.current = null
+        setReorderDrop(null)
+        return
+      }
+
+      const source = event.activatorEvent as Event & {
+        clientY?: number
+        touches?: TouchList
+        changedTouches?: TouchList
+      }
+      const startY = source.touches?.[0]?.clientY ?? source.changedTouches?.[0]?.clientY ?? source.clientY
+      const pointerY = startY === undefined ? overTarget.rect.top + overTarget.rect.height / 2 : startY + event.delta.y
+      const nextDrop = {
+        taskId: over.taskId,
+        edge: pointerY < overTarget.rect.top + overTarget.rect.height / 2 ? 'before' as const : 'after' as const,
+      }
+      reorderDropRef.current = nextDrop
+      setReorderDrop(nextDrop)
     },
     []
   )
@@ -276,35 +359,119 @@ export default function App() {
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const effectiveOverId = lastCollisionIdRef.current ?? (event.over ? String(event.over.id) : null)
+      const currentReorderDrop = reorderDropRef.current
       dragStartRectsRef.current.clear()
       lastCollisionIdRef.current = null
+      reorderDropRef.current = null
+      setReorderDrop(null)
       setActiveTaskId(null)
-      const { active } = event
-      if (!effectiveOverId || active.id === effectiveOverId) return
 
-      const activeDecoded = decodeGroupItemId(String(active.id))
+      const activeDecoded = decodeGroupItemId(String(event.active.id))
+      if (!activeDecoded || !effectiveOverId) return
+      const task = byId.get(activeDecoded.taskId)
+      if (!task) return
+
+      if (effectiveOverId === ROOT_DROP_ID) {
+        const oldParentIds = task.related_tasks?.parenttask?.map((parentTask) => parentTask.id) ?? []
+        const oldParentId = oldParentIds[0] ?? null
+        if (oldParentId === null) return
+        const parent = byId.get(oldParentId)
+        if (oldParentIds.length !== 1 || !canPromoteToRoot(task, parent, HONEYDO_LABEL)) {
+          notify('This task can only be promoted when its direct parent is a Honey-Do task.')
+          return
+        }
+        if (honeyDoLabelId === null) {
+          notify('The Honey-Do label is unavailable. Refresh the task list and try again.')
+          return
+        }
+        const rootPositions = taskTree.map((root) => dueDateToPosition(root.due_date)).filter(Number.isFinite)
+        const topPosition = Math.min(getTopPosition(), ...rootPositions) - 1
+        const labelIdToAdd = task.labels?.some((label) => label.id === honeyDoLabelId)
+          ? undefined
+          : honeyDoLabelId
+        changeTaskParent({
+          taskId: task.id,
+          oldParentId,
+          oldParentIds: task.related_tasks?.parenttask?.map((parentTask) => parentTask.id) ?? [],
+          newParentId: null,
+          oldDueDate: task.due_date,
+          newDueDate: positionToDueDate(topPosition),
+          labelIdToAdd,
+        }).catch((error: unknown) => {
+          notify(error instanceof Error ? error.message : 'Could not promote this task. Try again.')
+        })
+        return
+      }
+
+      if (effectiveOverId.startsWith('nest::')) {
+        const targetId = Number(effectiveOverId.slice('nest::'.length))
+        if (!Number.isFinite(targetId)) return
+        const findNode = (nodes: TaskTreeNode[], id: number): TaskTreeNode | null => {
+          for (const node of nodes) {
+            if (node.id === id) return node
+            const child = findNode(node.children, id)
+            if (child) return child
+          }
+          return null
+        }
+        const activeNode = findNode(taskTree, task.id)
+        const actualTargetNode = findNode(taskTree, targetId)
+        if (activeNode && isSelfOrDescendant(activeNode, targetId)) {
+          notify('A task cannot be moved under itself or one of its subtasks.')
+          return
+        }
+        if (!byId.has(targetId) || !actualTargetNode) return
+
+        const oldParentId = task.related_tasks?.parenttask?.[0]?.id ?? null
+        if (oldParentId === targetId) return
+        const siblingPositions = actualTargetNode.children
+          .map((child) => dueDateToPosition(child.due_date))
+          .filter(Number.isFinite)
+        const newPosition = (siblingPositions.length > 0 ? Math.max(...siblingPositions) : 0) + 1
+        changeTaskParent({
+          taskId: task.id,
+          oldParentId,
+          oldParentIds: task.related_tasks?.parenttask?.map((parentTask) => parentTask.id) ?? [],
+          newParentId: targetId,
+          oldDueDate: task.due_date,
+          newDueDate: positionToDueDate(newPosition),
+        }).then(() => {
+          setCollapsed((previous) => {
+            const next = new Set(previous)
+            next.delete(targetId)
+            return next
+          })
+        }).catch((error: unknown) => {
+          notify(error instanceof Error ? error.message : 'Could not move this task. Check permissions and try again.')
+        })
+        return
+      }
+
       const overDecoded = decodeGroupItemId(effectiveOverId)
-      if (!activeDecoded || !overDecoded) return
+      if (!overDecoded || activeDecoded.parent !== overDecoded.parent) return
 
-      // Cross-scope drop: snap back, no changes.
-      if (activeDecoded.parent !== overDecoded.parent) return
-
-      const group = groupBySortableId.get(String(active.id))
+      const group = groupBySortableId.get(String(event.active.id))
       if (!group) return
 
       const oldIndex = group.items.indexOf(activeDecoded.taskId)
-      const newIndex = group.items.indexOf(overDecoded.taskId)
-      if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return
-
-      // Reorder group items and rebuild the task list for that group.
-      const reorderedIds = arrayMove(group.items, oldIndex, newIndex)
+      const edge = currentReorderDrop?.taskId === overDecoded.taskId
+        ? currentReorderDrop.edge
+        : 'after'
+      const reorderedIds = reorderAtDropEdge(
+        group.items,
+        activeDecoded.taskId,
+        overDecoded.taskId,
+        edge
+      )
+      const newIndex = reorderedIds.indexOf(activeDecoded.taskId)
+      if (oldIndex === -1 || newIndex === oldIndex) return
       const groupTasks: import('./types/vikunja.ts').VikunjaTask[] = []
       for (const id of reorderedIds) {
-        const t = byId.get(id)
-        if (t) groupTasks.push(t)
+        const sibling = byId.get(id)
+        if (sibling) groupTasks.push(sibling)
       }
 
-      const positions = groupTasks.map((t) => dueDateToPosition(t.due_date))
+      const positions = groupTasks.map((sibling) => dueDateToPosition(sibling.due_date))
       const updates: Array<{ task: import('./types/vikunja.ts').VikunjaTask; due_date: string }> = []
 
       if (needsRebalance(positions)) {
@@ -330,11 +497,11 @@ export default function App() {
         updates.push({ task: moved, due_date: positionToDueDate(newPos) })
       }
 
-      // The hook applies every due_date position locally before issuing the
-      // backend writes, so buildTree reorders immediately and after refetch.
-      persistTaskOrdering(updates).catch(() => {})
+      persistTaskOrdering(updates).catch((error: unknown) => {
+        notify(error instanceof Error ? error.message : 'Could not save this order. Refresh and try again.')
+      })
     },
-    [groupBySortableId, byId, persistTaskOrdering]
+    [byId, groupBySortableId, persistTaskOrdering, taskTree, changeTaskParent, honeyDoLabelId, notify]
   )
 
   const sensors = useSensors(
@@ -443,6 +610,8 @@ export default function App() {
                 onUpdateTitle={handleUpdateTitle}
                 showCompleted={showCompleted}
                 isInDraggedSubtree={ancestorDragging && !isActive}
+                parentContext={node.parentContext}
+                dropEdge={reorderDrop?.taskId === node.id ? reorderDrop.edge : undefined}
               />
               {!isCollapsed && node.children.length > 0 &&
                 renderNodes(node.children, node.id, subtreeIsDragging)}
@@ -501,7 +670,15 @@ export default function App() {
       </header>
 
       {/* Task list */}
-      <main
+      <DndContext
+        sensors={sensors}
+        collisionDetection={siblingGroupCollisionDetection}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragCancel={handleDragCancel}
+        onDragEnd={handleDragEnd}
+      >
+        <main
         ref={mainRef}
         className="max-w-xl mx-auto pb-24 overscroll-none"
         style={{ transform: `translateY(${pullDistance}px)` }}
@@ -545,20 +722,23 @@ export default function App() {
           </div>
         )}
 
-        <DndContext
-          sensors={sensors}
-          collisionDetection={siblingGroupCollisionDetection}
-          onDragStart={handleDragStart}
-          onDragOver={handleDragOver}
-          onDragCancel={handleDragCancel}
-          onDragEnd={handleDragEnd}
-        >
-          {renderNodes(taskTree, ROOT_PARENT)}
-          <DragOverlay dropAnimation={null}>
-            {activeNode ? <TaskSubtreePreview node={activeNode} collapsed={collapsed} /> : null}
-          </DragOverlay>
-        </DndContext>
+        <RootPromotionDropTarget visible={activeTaskId !== null} />
+        {renderNodes(taskTree, ROOT_PARENT)}
       </main>
+      <DragOverlay dropAnimation={null}>
+        {activeNode ? <TaskSubtreePreview node={activeNode} collapsed={collapsed} /> : null}
+      </DragOverlay>
+      </DndContext>
+
+      {toastMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-20 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-gray-900 px-4 py-2 text-sm text-white shadow-lg dark:bg-gray-100 dark:text-gray-900 max-w-[calc(100vw-2rem)]"
+        >
+          {toastMessage}
+        </div>
+      )}
 
       {/* FAB */}
       <FAB onCreate={handleCreateTask} />

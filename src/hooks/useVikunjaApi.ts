@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { VikunjaTask, VikunjaLabel, CreateTaskPayload, UpdateTaskPayload } from '../types/vikunja.ts'
 import { HONEYDO_LABEL } from '../config.ts'
+import { applyParentChange, type ParentChange } from '../utils/hierarchyMutations.ts'
 
 const API_BASE = '/api/v1'
 const DETAIL_CONCURRENCY = 8
@@ -19,6 +20,20 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(`API ${path} failed: ${res.status} ${text}`)
   }
   return res.json() as Promise<T>
+}
+
+async function apiRequest(path: string, options?: RequestInit): Promise<void> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options?.headers,
+    },
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`API ${path} failed: ${res.status} ${text}`)
+  }
 }
 
 /** Run a list of promise-producing functions with a fixed concurrency cap. */
@@ -63,44 +78,49 @@ export function useVikunjaApi() {
    * (keyed by id) and the function returns the set of newly-discovered ids.
    */
   const collectSubtaskDetails = useCallback(
-    async (seed: VikunjaTask[], sink: Map<number, VikunjaTask>): Promise<Set<number>> => {
-      const reachable = new Set<number>()
+    async (
+      seed: VikunjaTask[],
+      sink: Map<number, VikunjaTask>,
+      alreadyDetailed: Set<number>
+    ): Promise<Set<number>> => {
+      const detailed = new Set(alreadyDetailed)
       const queue: number[] = []
-      for (const t of seed) {
-        const subs = t.related_tasks?.subtask ?? []
-        for (const r of subs) {
-          if (!sink.has(r.id) && !reachable.has(r.id) && !queue.includes(r.id)) {
-            queue.push(r.id)
-          }
+      for (const task of seed) {
+        for (const ref of task.related_tasks?.subtask ?? []) {
+          if (!detailed.has(ref.id) && !queue.includes(ref.id)) queue.push(ref.id)
         }
       }
+
       let depth = 0
       while (queue.length > 0 && depth < MAX_SUBTASK_DEPTH) {
-        const batch = queue.splice(0, queue.length)
-        const missing = batch.filter((id) => !sink.has(id) && !reachable.has(id))
-        if (missing.length === 0) {
+        const batch = queue.splice(0, queue.length).filter((id) => !detailed.has(id))
+        if (batch.length === 0) {
           depth++
           continue
         }
-        const details = await runWithConcurrency(missing, DETAIL_CONCURRENCY, (id) =>
+        // Mark attempted before fetching so a failed/cyclic reference cannot
+        // repeatedly consume requests at deeper levels.
+        for (const id of batch) detailed.add(id)
+        const details = await runWithConcurrency(batch, DETAIL_CONCURRENCY, (id) =>
           fetchTaskDetail(id).catch(() => null)
         )
         const nextQueue: number[] = []
-        for (const d of details) {
-          if (!d) continue
-          sink.set(d.id, d)
-          reachable.add(d.id)
-          const subs = d.related_tasks?.subtask ?? []
-          for (const s of subs) {
-            if (!sink.has(s.id) && !reachable.has(s.id) && !nextQueue.includes(s.id)) {
-              nextQueue.push(s.id)
-            }
+        for (const detail of details) {
+          if (!detail) continue
+          const existing = sink.get(detail.id)
+          sink.set(detail.id, {
+            ...existing,
+            ...detail,
+            labels: detail.labels?.length ? detail.labels : (existing?.labels ?? []),
+          })
+          for (const child of detail.related_tasks?.subtask ?? []) {
+            if (!detailed.has(child.id) && !nextQueue.includes(child.id)) nextQueue.push(child.id)
           }
         }
         queue.push(...nextQueue)
         depth++
       }
-      return reachable
+      return detailed
     },
     [fetchTaskDetail]
   )
@@ -135,13 +155,22 @@ export function useVikunjaApi() {
       const honeyDoDetails = await runWithConcurrency(honeyDoIds, DETAIL_CONCURRENCY, (id) =>
         fetchTaskDetail(id).catch(() => null)
       )
-      for (const d of honeyDoDetails) {
-        if (d) seen.set(d.id, d)
+      const detailedIds = new Set<number>()
+      for (const detail of honeyDoDetails) {
+        if (!detail) continue
+        const existing = seen.get(detail.id)
+        seen.set(detail.id, {
+          ...existing,
+          ...detail,
+          labels: detail.labels?.length ? detail.labels : (existing?.labels ?? []),
+        })
+        detailedIds.add(detail.id)
       }
       const enrichedSeed = Array.from(seen.values())
 
-      // Walk subtask links out to a bounded depth and fetch their details too.
-      await collectSubtaskDetails(enrichedSeed, seen)
+      // Fetch each reachable subtask's detail even when it was already present
+      // in the project list: list endpoints contain no parenttask relation.
+      await collectSubtaskDetails(enrichedSeed, seen, detailedIds)
 
       const allTasks = Array.from(seen.values())
       setTasks(allTasks)
@@ -175,18 +204,13 @@ export function useVikunjaApi() {
     return merged
   }, [])
 
-  /** Read-modify-write update that preserves fields the caller does not touch.
-   *  Vikunja POST /tasks/{id} replaces the full resource, so partial updates
-   *  silently clear omitted fields (e.g. due_date). */
+  /**
+   * Vikunja POST /tasks/{id} replaces the resource. Start from the complete
+   * fetched task object so fields not modeled by this UI (priority, dates,
+   * repeat settings, etc.) survive due-date/title edits as well.
+   */
   const updateTask = useCallback(async (current: VikunjaTask, patch: UpdateTaskPayload) => {
-    const merged: UpdateTaskPayload = {
-      title: current.title,
-      done: current.done,
-      due_date: current.due_date,
-      project_id: current.project_id,
-      description: current.description,
-      ...patch,
-    }
+    const merged = { ...current, ...patch }
     return updateTaskRaw(current, merged)
   }, [updateTaskRaw])
 
@@ -227,6 +251,40 @@ export function useVikunjaApi() {
     )
   }, [labels])
 
+  const changeTaskParent = useCallback(async (change: ParentChange) => {
+    const writeDueDate = async (taskId: number, dueDate: string | null) => {
+      const current = tasks.find((task) => task.id === taskId)
+      if (!current) throw new Error(`Task ${taskId} is no longer loaded`)
+      await updateTask(current, { due_date: dueDate })
+    }
+
+    await applyParentChange(change, {
+      removeRelation: async (parentId, childId) => {
+        await apiRequest(`/tasks/${parentId}/relations/subtask/${childId}`, { method: 'DELETE' })
+      },
+      addRelation: async (parentId, childId) => {
+        await apiRequest(`/tasks/${parentId}/relations`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            task_id: parentId,
+            other_task_id: childId,
+            relation_kind: 'subtask',
+          }),
+        })
+      },
+      setDueDate: writeDueDate,
+      addLabel: addLabelToTask,
+      removeLabel: async (taskId, labelId) => {
+        await apiRequest(`/tasks/${taskId}/labels/${labelId}`, { method: 'DELETE' })
+        setTasks((prev) => prev.map((task) => task.id === taskId
+          ? { ...task, labels: task.labels.filter((label) => label.id !== labelId) }
+          : task
+        ))
+      },
+      refresh: fetchTasks,
+    })
+  }, [tasks, updateTask, addLabelToTask, fetchTasks])
+
   const createLabel = useCallback(async (title: string) => {
     const label = await apiFetch<VikunjaLabel>('/labels', {
       method: 'PUT',
@@ -249,6 +307,7 @@ export function useVikunjaApi() {
     createTask,
     updateTask,
     persistTaskOrdering,
+    changeTaskParent,
     addLabelToTask,
     createLabel,
   }

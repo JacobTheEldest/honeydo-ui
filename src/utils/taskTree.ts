@@ -4,6 +4,8 @@ import { dueDateToPosition } from './ordering.ts'
 export interface TaskTreeNode extends VikunjaTask {
   children: TaskTreeNode[]
   depth: number
+  /** Context for a Honey-Do task whose actual parent is outside this tree. */
+  parentContext?: string
 }
 
 /** Root-id sentinel used by the DnD id-encoding helpers. */
@@ -52,57 +54,16 @@ export function decodeGroupItemId(encoded: string | number): { parent: ParentSco
   return { parent: parentId, taskId }
 }
 
-/** A task is a parent (has at least one subtask) iff related_tasks.subtask
- *  has at least one entry that references a task in the fetched set. */
-export function hasSubtasks(task: VikunjaTask, byId: Map<number, VikunjaTask>): boolean {
-  const refs = task.related_tasks?.subtask
-  if (!refs || refs.length === 0) return false
-  return refs.some((r) => byId.has(r.id))
-}
-
-/** A task is "Honey-Do rooted" if it carries the Honey-Do label, or if any of
- *  its ancestors does. Used by buildTree to decide which nodes become roots. */
-function isHoneyDoRooted(
-  task: VikunjaTask,
-  byId: Map<number, VikunjaTask>,
-  honeyDoIds: Set<number>
-): boolean {
-  if (honeyDoIds.has(task.id)) return true
-  const visited = new Set<number>()
-  let cur: VikunjaTask | undefined = task
-  while (cur) {
-    if (visited.has(cur.id)) return false // cycle guard
-    visited.add(cur.id)
-    const parents = cur.related_tasks?.parenttask
-    if (!parents || parents.length === 0) return false
-    for (const p of parents) {
-      const parentTask = byId.get(p.id)
-      if (!parentTask) continue
-      if (honeyDoIds.has(parentTask.id)) return true
-      // Walk up; the outer loop picks up where we left off.
-      cur = parentTask
-      break
-    }
-  }
-  return false
-}
-
-function getFirstParentId(task: VikunjaTask): number | null {
-  const parents = task.related_tasks?.parenttask
-  if (!parents || parents.length === 0) return null
-  return parents[0].id
+function getFirstParent(task: VikunjaTask): { id: number; title: string } | null {
+  const parent = task.related_tasks?.parenttask?.[0]
+  return parent ? { id: parent.id, title: parent.title } : null
 }
 
 /**
- * Build a forest of TaskTreeNodes from a flat list of Vikunja tasks.
- *
- * Rules:
- *  - Roots are honey-do-rooted tasks with no parenttask in the input set.
- *  - A child whose parent isn't in the fetched set becomes a root (orphan).
- *  - Cycles are broken by visiting each id at most once.
- *  - depth is assigned from 0 at the root.
- *  - Sibling order is determined by the persisted due_date position, with
- *    related_tasks.subtask order (and then input order) as the stable tie-breaker.
+ * Build the Honey-Do forest. Unlabeled descendants remain in a visible
+ * Honey-Do subtree, but a labeled task whose parent is outside that forest is
+ * surfaced as a contextual pseudo-root instead of disappearing or making its
+ * unlabeled parent look like a prioritized Honey-Do item.
  */
 export function buildTree(
   flat: VikunjaTask[],
@@ -111,85 +72,91 @@ export function buildTree(
   if (flat.length === 0) return []
 
   const byId = new Map<number, VikunjaTask>()
-  for (const t of flat) byId.set(t.id, t)
+  for (const task of flat) byId.set(task.id, task)
 
   const honeyDoIds = new Set<number>()
-  for (const t of flat) {
-    if (t.labels?.some((l) => l.title === honeyDoLabel)) honeyDoIds.add(t.id)
+  for (const task of flat) {
+    if (task.labels?.some((label) => label.title === honeyDoLabel)) honeyDoIds.add(task.id)
   }
 
-  // Decide each task's parent (id) and the order children should be rendered.
-  const childOrder = new Map<number, number[]>() // parentId -> ordered child ids
-  const parentOf = new Map<number, number>() // childId -> parentId
-
-  for (const t of flat) {
-    const refs = t.related_tasks?.subtask ?? []
-    if (refs.length > 0) {
-      const ordered: number[] = []
-      for (const r of refs) {
-        if (byId.has(r.id) && !ordered.includes(r.id)) ordered.push(r.id)
-      }
-      // Append any children that exist in the flat list but weren't listed
-      // by the parent (defensive).
-      childOrder.set(t.id, ordered)
-    }
+  const declaredParentOf = new Map<number, number>()
+  for (const task of flat) {
+    const parent = getFirstParent(task)
+    if (parent && parent.id !== task.id) declaredParentOf.set(task.id, parent.id)
   }
 
-  for (const t of flat) {
-    const parentId = getFirstParentId(t)
-    if (parentId === null) continue
-    if (parentId === t.id) continue // self-parent: ignore
-    if (!byId.has(parentId)) continue
-    parentOf.set(t.id, parentId)
-    // Ensure every child has a slot in childOrder, even if the parent didn't
-    // list it (so we still emit it under that parent).
-    const existing = childOrder.get(parentId) ?? []
-    if (!existing.includes(t.id)) {
-      childOrder.set(parentId, [...existing, t.id])
-    }
+  const childOrder = new Map<number, number[]>()
+  for (const task of flat) {
+    const children = task.related_tasks?.subtask ?? []
+    const ordered = children
+      .filter((child, index) =>
+        byId.has(child.id) &&
+        (declaredParentOf.get(child.id) === undefined || declaredParentOf.get(child.id) === task.id) &&
+        children.findIndex((item) => item.id === child.id) === index
+      )
+      .map((child) => child.id)
+    if (ordered.length > 0) childOrder.set(task.id, ordered)
+  }
+  for (const task of flat) {
+    const parent = getFirstParent(task)
+    if (!parent || parent.id === task.id || !byId.has(parent.id)) continue
+    const siblings = childOrder.get(parent.id) ?? []
+    if (!siblings.includes(task.id)) childOrder.set(parent.id, [...siblings, task.id])
   }
 
-  // Build nodes recursively. A node is a root iff it has no parent and it
-  // is honey-do-rooted (or it has no parent and no honey-do label, in which
-  // case it's a top-level orphan that we surface in case the user wants it).
   const nodes = new Map<number, TaskTreeNode>()
-  for (const t of flat) {
-    nodes.set(t.id, { ...t, children: [], depth: 0 })
-  }
+  for (const task of flat) nodes.set(task.id, { ...task, children: [], depth: 0 })
 
-  const visiting = new Set<number>()
-  const attachChildren = (node: TaskTreeNode, depth: number): void => {
-    if (visiting.has(node.id)) {
-      // Cycle: stop descending.
-      return
-    }
+  const attached = new Set<number>()
+  const attachChildren = (node: TaskTreeNode, depth: number, visiting: Set<number>): void => {
+    if (visiting.has(node.id) || attached.has(node.id)) return
     visiting.add(node.id)
+    attached.add(node.id)
     node.depth = depth
-    const ordered = childOrder.get(node.id) ?? []
     const children: TaskTreeNode[] = []
-    for (const childId of ordered) {
+    for (const childId of childOrder.get(node.id) ?? []) {
       const child = nodes.get(childId)
-      if (!child) continue
-      child.depth = depth + 1
-      attachChildren(child, depth + 1)
-      children.push(child)
+      if (!child || attached.has(childId)) continue
+      attachChildren(child, depth + 1, visiting)
+      if (attached.has(childId)) children.push(child)
     }
-    node.children.push(...orderByPersistedDueDate(children))
+    node.children = orderByPersistedDueDate(children)
     visiting.delete(node.id)
   }
 
   const roots: TaskTreeNode[] = []
-  for (const t of flat) {
-    if (parentOf.has(t.id)) continue
-    if (!isHoneyDoRooted(t, byId, honeyDoIds)) continue
-    const node = nodes.get(t.id)
+  // Genuine roots must have no parent relation, not merely a parent omitted
+  // from this fetch. The latter are handled below with explicit context.
+  for (const task of flat) {
+    if (getFirstParent(task) || !honeyDoIds.has(task.id)) continue
+    const node = nodes.get(task.id)
     if (!node) continue
-    attachChildren(node, 0)
+    attachChildren(node, 0, new Set())
+    roots.push(node)
+  }
+
+  // Add labeled tasks disconnected from the Honey-Do forest. Prefer the
+  // highest labeled task under an omitted/unlabeled ancestor so its labeled
+  // descendants stay attached beneath it.
+  const contextualRoots = flat.filter((task) => {
+    if (!honeyDoIds.has(task.id) || attached.has(task.id)) return false
+    const parent = getFirstParent(task)
+    return parent !== null && !honeyDoIds.has(parent.id)
+  })
+  for (const task of contextualRoots) {
+    if (attached.has(task.id)) continue
+    const parent = getFirstParent(task)
+    const node = nodes.get(task.id)
+    if (!parent || !node) continue
+    const knownParent = byId.get(parent.id)
+    node.parentContext = `Subtask of: ${knownParent?.title ?? parent.title}`
+    attachChildren(node, 0, new Set())
     roots.push(node)
   }
 
   return orderByPersistedDueDate(roots)
 }
+
 
 /**
  * Depth-first flatten. Skips any descendants of a parent whose id is in

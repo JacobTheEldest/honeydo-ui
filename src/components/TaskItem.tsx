@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { useDroppable } from '@dnd-kit/core'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useDrag } from '@use-gesture/react'
@@ -18,6 +19,8 @@ interface TaskItemProps {
   onUpdateTitle: (id: number, title: string) => void
   showCompleted: boolean
   isInDraggedSubtree: boolean
+  parentContext?: string
+  dropEdge?: 'before' | 'after'
 }
 
 export default function TaskItem({
@@ -31,6 +34,8 @@ export default function TaskItem({
   onUpdateTitle,
   showCompleted,
   isInDraggedSubtree,
+  parentContext,
+  dropEdge,
 }: TaskItemProps) {
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(task.title)
@@ -45,6 +50,9 @@ export default function TaskItem({
     transition,
     isDragging,
   } = useSortable({ id: sortableId })
+  const { setNodeRef: setNestTargetRef, isOver: isNestTargetOver } = useDroppable({
+    id: `nest::${task.id}`,
+  })
 
   // DnD transition glitch fix: only animate the actively-dragged item. Other
   // items snap to their new positions instead of "settling".
@@ -122,6 +130,15 @@ export default function TaskItem({
         ${task.done && !showCompleted ? 'hidden' : ''}
       `}
     >
+      {dropEdge && (
+        <div
+          aria-hidden="true"
+          data-reorder-edge={dropEdge}
+          className={`absolute left-4 right-4 z-20 h-0.5 bg-honey shadow-[0_0_0_2px_rgba(255,255,255,0.75)] ${
+            dropEdge === 'before' ? 'top-0' : 'bottom-0'
+          }`}
+        />
+      )}
       {/* Swipe background layer */}
       <div
         className={`
@@ -148,6 +165,16 @@ export default function TaskItem({
           touch-none select-none
         "
       >
+        <div
+          ref={setNestTargetRef}
+          data-nest-target={task.id}
+          aria-label={`Drop a task here to make it a subtask of ${task.title}`}
+          className={`absolute left-1/4 right-14 top-1/4 bottom-1/4 z-10 rounded-md border-2 border-dashed pointer-events-none transition-colors ${
+            isNestTargetOver
+              ? 'border-honey bg-honey/15 dark:bg-honey/20'
+              : 'border-transparent'
+          }`}
+        />
         {/* Fold caret (only when this task has children) */}
         {hasChildren ? (
           <button
@@ -198,6 +225,11 @@ export default function TaskItem({
             >
               {task.title}
             </button>
+          )}
+          {!editing && parentContext && (
+            <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500 truncate">
+              {parentContext}
+            </p>
           )}
         </div>
 
