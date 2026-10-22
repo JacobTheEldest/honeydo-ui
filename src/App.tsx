@@ -2,14 +2,18 @@ import { useEffect, useState, useCallback, useMemo, useRef, Fragment, type React
 import { useDrag } from '@use-gesture/react'
 import {
   DndContext,
+  DragOverlay,
   closestCenter,
+  pointerWithin,
   KeyboardSensor,
   PointerSensor,
   TouchSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
   type DragOverEvent,
+  type CollisionDetection,
 } from '@dnd-kit/core'
 import {
   arrayMove,
@@ -21,6 +25,7 @@ import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown, Sun, Moon } from 
 import { useVikunjaApi } from './hooks/useVikunjaApi.ts'
 import { useDarkMode } from './hooks/useDarkMode.ts'
 import TaskItem from './components/TaskItem.tsx'
+import TaskSubtreePreview from './components/TaskSubtreePreview.tsx'
 import FAB from './components/FAB.tsx'
 import {
   positionToDueDate,
@@ -50,6 +55,7 @@ export default function App() {
     fetchTasks,
     createTask,
     updateTask,
+    persistTaskOrdering,
     addLabelToTask,
     createLabel,
   } = useVikunjaApi()
@@ -58,6 +64,9 @@ export default function App() {
   const [showCompleted, setShowCompleted] = useState(false)
   const [honeyDoLabelId, setHoneyDoLabelId] = useState<number | null>(null)
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set())
+  const [activeTaskId, setActiveTaskId] = useState<number | null>(null)
+  const dragStartRectsRef = useRef<Map<string, DOMRectReadOnly>>(new Map())
+  const lastCollisionIdRef = useRef<string | null>(null)
 
   // Find or create Honey-Do label
   useEffect(() => {
@@ -82,6 +91,19 @@ export default function App() {
   const taskTree = useMemo<TaskTreeNode[]>(() => {
     return buildTree(tasks, HONEYDO_LABEL)
   }, [tasks])
+
+  const activeNode = useMemo<TaskTreeNode | null>(() => {
+    if (activeTaskId === null) return null
+    const find = (nodes: TaskTreeNode[]): TaskTreeNode | null => {
+      for (const node of nodes) {
+        if (node.id === activeTaskId) return node
+        const child = find(node.children)
+        if (child) return child
+      }
+      return null
+    }
+    return find(taskTree)
+  }, [activeTaskId, taskTree])
 
   // Hidden ancestor ids: any node whose ancestor is `done && !showCompleted`
   // (i.e. the show-done toggle is off and an ancestor was marked done).
@@ -139,6 +161,45 @@ export default function App() {
     return m
   }, [groups])
 
+  const siblingGroupCollisionDetection = useCallback<CollisionDetection>((args) => {
+    const remember = (collisions: ReturnType<typeof pointerWithin>) => {
+      lastCollisionIdRef.current = collisions[0] ? String(collisions[0].id) : null
+      return collisions
+    }
+
+    const active = decodeGroupItemId(String(args.active.id))
+    if (!active) return remember(closestCenter(args))
+
+    const isSameScope = (id: string | number) => {
+      const decoded = decodeGroupItemId(String(id))
+      return decoded?.parent === active.parent
+    }
+
+    // Use drag-start geometry first. Sortable transforms can move rows from
+    // other nested groups under the pointer during a drag; their original
+    // location still identifies an attempted cross-scope drop correctly.
+    const initialContainers = args.droppableContainers.map((container) => {
+      const rect = dragStartRectsRef.current.get(String(container.id))
+      return rect ? { ...container, rect: { current: rect } } : container
+    })
+    const initialHits = pointerWithin({ ...args, droppableContainers: initialContainers })
+    const sameInitialHits = initialHits.filter((collision) => isSameScope(collision.id))
+    if (sameInitialHits.length > 0) return remember(sameInitialHits)
+    if (initialHits.length > 0) return remember(initialHits)
+
+    const currentHits = pointerWithin(args)
+    const sameCurrentHits = currentHits.filter((collision) => isSameScope(collision.id))
+    if (sameCurrentHits.length > 0) return remember(sameCurrentHits)
+    if (currentHits.length > 0) return remember(currentHits)
+
+    const sameScopeContainers = args.droppableContainers.filter((container) =>
+      isSameScope(container.id)
+    )
+    return remember(sameScopeContainers.length > 0
+      ? closestCenter({ ...args, droppableContainers: sameScopeContainers })
+      : [])
+  }, [])
+
   // Stable handlers
   const handleToggleCollapse = useCallback((taskId: number) => {
     setCollapsed((prev) => {
@@ -186,21 +247,43 @@ export default function App() {
     [honeyDoLabelId, createTask, addLabelToTask]
   )
 
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const decoded = decodeGroupItemId(String(event.active.id))
+    const rects = new Map<string, DOMRectReadOnly>()
+    document.querySelectorAll<HTMLElement>('[data-sortable-id]').forEach((element) => {
+      const id = element.dataset.sortableId
+      if (id) rects.set(id, element.getBoundingClientRect())
+    })
+    dragStartRectsRef.current = rects
+    lastCollisionIdRef.current = null
+    setActiveTaskId(decoded?.taskId ?? null)
+  }, [])
+
+  const handleDragCancel = useCallback(() => {
+    dragStartRectsRef.current.clear()
+    lastCollisionIdRef.current = null
+    setActiveTaskId(null)
+  }, [])
+
   const handleDragOver = useCallback(
     (_event: DragOverEvent) => {
-      // Cross-scope drops are visually rejected by leaving DndContext in
-      // its current state; onDragEnd re-checks scope and snaps back.
+      // Cross-scope drops remain visible as foreign collisions and are rejected
+      // by handleDragEnd; the active item never changes groups mid-drag.
     },
     []
   )
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
-      const { active, over } = event
-      if (!over || active.id === over.id) return
+      const effectiveOverId = lastCollisionIdRef.current ?? (event.over ? String(event.over.id) : null)
+      dragStartRectsRef.current.clear()
+      lastCollisionIdRef.current = null
+      setActiveTaskId(null)
+      const { active } = event
+      if (!effectiveOverId || active.id === effectiveOverId) return
 
       const activeDecoded = decodeGroupItemId(String(active.id))
-      const overDecoded = decodeGroupItemId(String(over.id))
+      const overDecoded = decodeGroupItemId(effectiveOverId)
       if (!activeDecoded || !overDecoded) return
 
       // Cross-scope drop: snap back, no changes.
@@ -247,13 +330,11 @@ export default function App() {
         updates.push({ task: moved, due_date: positionToDueDate(newPos) })
       }
 
-      // Fire updates. We don't await — UI updates optimistically via the
-      // existing setTasks merge.
-      for (const u of updates) {
-        updateTask(u.task, { due_date: u.due_date }).catch(() => {})
-      }
+      // The hook applies every due_date position locally before issuing the
+      // backend writes, so buildTree reorders immediately and after refetch.
+      persistTaskOrdering(updates).catch(() => {})
     },
-    [groupBySortableId, byId, updateTask]
+    [groupBySortableId, byId, persistTaskOrdering]
   )
 
   const sensors = useSensors(
@@ -332,7 +413,11 @@ export default function App() {
   // Recursive tree walker: renders each sibling group in its own
   // <SortableContext>, then immediately recurses into each node's children.
   // This keeps subtasks directly beneath their parent, in tree order.
-  const renderNodes = (nodes: TaskTreeNode[], parentScope: ParentScope): ReactNode => {
+  const renderNodes = (
+    nodes: TaskTreeNode[],
+    parentScope: ParentScope,
+    ancestorDragging = false
+  ): ReactNode => {
     const visible = nodes.filter((n) => !hiddenByAncestor.has(n.id))
     if (visible.length === 0) return null
     return (
@@ -343,6 +428,8 @@ export default function App() {
       >
         {visible.map((node) => {
           const isCollapsed = collapsed.has(node.id)
+          const isActive = activeTaskId === node.id
+          const subtreeIsDragging = ancestorDragging || isActive
           return (
             <Fragment key={`${parentScope}:${node.id}`}>
               <TaskItem
@@ -355,9 +442,10 @@ export default function App() {
                 onToggleDone={handleToggleDone}
                 onUpdateTitle={handleUpdateTitle}
                 showCompleted={showCompleted}
+                isInDraggedSubtree={ancestorDragging && !isActive}
               />
               {!isCollapsed && node.children.length > 0 &&
-                renderNodes(node.children, node.id)}
+                renderNodes(node.children, node.id, subtreeIsDragging)}
             </Fragment>
           )
         })}
@@ -459,11 +547,16 @@ export default function App() {
 
         <DndContext
           sensors={sensors}
-          collisionDetection={closestCenter}
+          collisionDetection={siblingGroupCollisionDetection}
+          onDragStart={handleDragStart}
           onDragOver={handleDragOver}
+          onDragCancel={handleDragCancel}
           onDragEnd={handleDragEnd}
         >
           {renderNodes(taskTree, ROOT_PARENT)}
+          <DragOverlay dropAnimation={null}>
+            {activeNode ? <TaskSubtreePreview node={activeNode} collapsed={collapsed} /> : null}
+          </DragOverlay>
         </DndContext>
       </main>
 

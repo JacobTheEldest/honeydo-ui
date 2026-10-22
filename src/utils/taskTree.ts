@@ -1,4 +1,5 @@
 import type { VikunjaTask } from '../types/vikunja.ts'
+import { dueDateToPosition } from './ordering.ts'
 
 export interface TaskTreeNode extends VikunjaTask {
   children: TaskTreeNode[]
@@ -9,6 +10,18 @@ export interface TaskTreeNode extends VikunjaTask {
 export const ROOT_PARENT = 'r' as const
 
 export type ParentScope = typeof ROOT_PARENT | number
+
+/** Vikunja exposes each task's due_date on task list and detail responses. */
+function orderByPersistedDueDate<T extends VikunjaTask>(tasks: T[]): T[] {
+  return tasks
+    .map((task, index) => ({ task, index, position: dueDateToPosition(task.due_date) }))
+    .sort((a, b) => {
+      const aPosition = Number.isFinite(a.position) ? a.position : 0
+      const bPosition = Number.isFinite(b.position) ? b.position : 0
+      return aPosition - bPosition || a.index - b.index
+    })
+    .map(({ task }) => task)
+}
 
 /**
  * Encode a (parentScope, taskId) pair into a single string for useSortable.
@@ -88,10 +101,8 @@ function getFirstParentId(task: VikunjaTask): number | null {
  *  - A child whose parent isn't in the fetched set becomes a root (orphan).
  *  - Cycles are broken by visiting each id at most once.
  *  - depth is assigned from 0 at the root.
- *  - Sibling order: parent tasks appear in the order they were in the input;
- *    child tasks appear in the order their parent listed them in
- *    related_tasks.subtask (with any task missing from that list appended
- *    in input order).
+ *  - Sibling order is determined by the persisted due_date position, with
+ *    related_tasks.subtask order (and then input order) as the stable tie-breaker.
  */
 export function buildTree(
   flat: VikunjaTask[],
@@ -155,13 +166,15 @@ export function buildTree(
     visiting.add(node.id)
     node.depth = depth
     const ordered = childOrder.get(node.id) ?? []
+    const children: TaskTreeNode[] = []
     for (const childId of ordered) {
       const child = nodes.get(childId)
       if (!child) continue
       child.depth = depth + 1
       attachChildren(child, depth + 1)
-      node.children.push(child)
+      children.push(child)
     }
+    node.children.push(...orderByPersistedDueDate(children))
     visiting.delete(node.id)
   }
 
@@ -175,7 +188,7 @@ export function buildTree(
     roots.push(node)
   }
 
-  return roots
+  return orderByPersistedDueDate(roots)
 }
 
 /**

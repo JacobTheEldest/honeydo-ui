@@ -17,6 +17,7 @@ interface TaskItemProps {
   onToggleDone: (id: number, done: boolean) => void
   onUpdateTitle: (id: number, title: string) => void
   showCompleted: boolean
+  isInDraggedSubtree: boolean
 }
 
 export default function TaskItem({
@@ -29,6 +30,7 @@ export default function TaskItem({
   onToggleDone,
   onUpdateTitle,
   showCompleted,
+  isInDraggedSubtree,
 }: TaskItemProps) {
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(task.title)
@@ -112,6 +114,8 @@ export default function TaskItem({
   return (
     <div
       ref={setNodeRef}
+      data-task-id={task.id}
+      data-sortable-id={sortableId}
       style={{ ...dndStyle, paddingLeft: indentPx }}
       className={`
         relative overflow-hidden
@@ -137,7 +141,7 @@ export default function TaskItem({
         style={{
           transform: `translateX(${effectiveSwipeX}px)`,
           transition: isSwiping || isDragging ? 'none' : 'transform 0.2s ease-out',
-          opacity: isDragging ? 0.5 : 1,
+          opacity: isDragging ? 0.5 : isInDraggedSubtree ? 0.3 : 1,
         }}
         className="
           relative flex items-center gap-2 px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700

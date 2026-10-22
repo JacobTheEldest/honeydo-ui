@@ -190,6 +190,25 @@ export function useVikunjaApi() {
     return updateTaskRaw(current, merged)
   }, [updateTaskRaw])
 
+  const persistTaskOrdering = useCallback(async (
+    updates: Array<{ task: VikunjaTask; due_date: string }>
+  ) => {
+    const dueDates = new Map(updates.map(({ task, due_date }) => [task.id, due_date]))
+    setTasks((prev) => prev.map((task) => {
+      const due_date = dueDates.get(task.id)
+      return due_date === undefined ? task : { ...task, due_date }
+    }))
+
+    const results = await Promise.allSettled(updates.map(({ task, due_date }) =>
+      updateTask({ ...task, due_date }, { due_date })
+    ))
+    if (results.some((result) => result.status === 'rejected')) {
+      // Restore the backend's authoritative state if any position write failed.
+      await fetchTasks().catch(() => {})
+      throw new Error('One or more task order updates failed')
+    }
+  }, [fetchTasks, updateTask])
+
   const addLabelToTask = useCallback(async (taskId: number, labelId: number) => {
     await apiFetch(`/tasks/${taskId}/labels`, {
       method: 'PUT',
@@ -229,6 +248,7 @@ export function useVikunjaApi() {
     fetchTasks,
     createTask,
     updateTask,
+    persistTaskOrdering,
     addLabelToTask,
     createLabel,
   }
