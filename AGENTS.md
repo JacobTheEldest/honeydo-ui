@@ -22,6 +22,16 @@ For every feature, bug fix, or browser-interaction change, reproduce and verify 
 - If automation is impractical for a browser-only behavior, record reproducible browser steps and the captured observations (for example, gesture target and API-call count). Verify the pre-fix failure when possible, then the post-fix success.
 - Run the targeted test, if one exists, plus `npm run build` and `npm run lint`. Fix failures caused by the change; report any unrelated baseline failure explicitly.
 
+## Mandatory pre-push gate
+
+Before pushing any code change:
+
+- The relevant local regression test must pass, or the changed browser behavior must be reproduced and verified locally using the workflow above. A build alone is not a substitute.
+- `npm run build` and `npm run lint` must pass. If either has an unrelated baseline failure, document the exact failure and why it is unrelated; fix failures caused by the change.
+- If local verification is truly blocked, state the exact blocker and obtain explicit user approval before pushing unverified code. Never describe unverified code as verified.
+
+Keep these stages distinct: local regression/build/lint checks happen before the push; CI is checked after the push and does not replace local verification; deployment happens only after CI passes and only when requested or required by the task. A documentation-only change does not require deployment.
+
 Existing project commands:
 
 ```sh
