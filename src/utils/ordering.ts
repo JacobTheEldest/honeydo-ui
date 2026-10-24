@@ -18,6 +18,16 @@ export function getMidpointPosition(prevPos: number, nextPos: number): number {
   return (prevPos + nextPos) / 2
 }
 
+/** Insert after a row without colliding with the next persisted sibling. */
+export function getSequentialPosition(afterPosition: number, siblingPositions: number[]): number {
+  const nextPosition = siblingPositions
+    .filter((position) => Number.isFinite(position) && position > afterPosition)
+    .reduce((next, position) => Math.min(next, position), Infinity)
+  return Number.isFinite(nextPosition)
+    ? getMidpointPosition(afterPosition, nextPosition)
+    : afterPosition + 1
+}
+
 export function needsRebalance(positions: number[]): boolean {
   for (let i = 1; i < positions.length; i++) {
     const gap = positions[i] - positions[i - 1]

@@ -188,9 +188,39 @@ export function useVikunjaApi() {
       method: 'PUT',
       body: JSON.stringify(payload),
     })
-    setTasks(prev => [task, ...prev])
+    setTasks((prev) => [task, ...prev])
     return task
   }, [])
+
+  const deleteTask = useCallback(async (taskId: number) => {
+    await apiRequest(`/tasks/${taskId}`, { method: 'DELETE' })
+    setTasks((previous) => previous.filter((task) => task.id !== taskId))
+  }, [])
+
+  const createSubtask = useCallback(async (payload: CreateTaskPayload, parentId: number) => {
+    const task = await apiFetch<VikunjaTask>(`/projects/${payload.project_id}/tasks`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+    setTasks((prev) => [task, ...prev])
+    try {
+      await apiRequest(`/tasks/${parentId}/relations`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          task_id: parentId,
+          other_task_id: task.id,
+          relation_kind: 'subtask',
+        }),
+      })
+      await fetchTasks()
+      return task
+    } catch (error) {
+      // A created-but-unlinked task must not remain as a false root in the UI.
+      await deleteTask(task.id).catch(() => {})
+      await fetchTasks().catch(() => {})
+      throw error
+    }
+  }, [fetchTasks, deleteTask])
 
   const updateTaskRaw = useCallback(async (current: VikunjaTask, payload: UpdateTaskPayload) => {
     const task = await apiFetch<VikunjaTask>(`/tasks/${current.id}`, {
@@ -305,6 +335,7 @@ export function useVikunjaApi() {
     error,
     fetchTasks,
     createTask,
+    createSubtask,
     updateTask,
     persistTaskOrdering,
     changeTaskParent,

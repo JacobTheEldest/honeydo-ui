@@ -1,9 +1,9 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useDrag } from '@use-gesture/react'
-import { ExternalLink, Check, GripVertical, ChevronRight, ChevronDown } from 'lucide-react'
+import { ExternalLink, Check, GripVertical, ChevronRight, ChevronDown, MoreHorizontal, Plus } from 'lucide-react'
 import { VIKUNJA_BASE_URL } from '../config.ts'
 import type { VikunjaTask } from '../types/vikunja.ts'
 
@@ -17,10 +17,14 @@ interface TaskItemProps {
   onToggleCollapse: (taskId: number) => void
   onToggleDone: (id: number, done: boolean) => void
   onUpdateTitle: (id: number, title: string) => void
+  onAddSubtask: (taskId: number) => void
+  menuOpen: boolean
+  onMenuOpenChange: (taskId: number, open: boolean) => void
   showCompleted: boolean
   isInDraggedSubtree: boolean
   parentContext?: string
   dropEdge?: 'before' | 'after'
+  nestingTargetId?: number | null
 }
 
 export default function TaskItem({
@@ -32,15 +36,20 @@ export default function TaskItem({
   onToggleCollapse,
   onToggleDone,
   onUpdateTitle,
+  onAddSubtask,
+  menuOpen,
+  onMenuOpenChange,
   showCompleted,
   isInDraggedSubtree,
   parentContext,
   dropEdge,
+  nestingTargetId,
 }: TaskItemProps) {
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(task.title)
   const [swipeX, setSwipeX] = useState(0)
   const [isSwiping, setIsSwiping] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   const {
     attributes,
@@ -112,6 +121,27 @@ export default function TaskItem({
 
   const vikunjaUrl = `${VIKUNJA_BASE_URL}/tasks/${task.id}`
 
+  useEffect(() => {
+    if (!menuOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !menuRef.current?.contains(event.target)) {
+        onMenuOpenChange(task.id, false)
+      }
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        onMenuOpenChange(task.id, false)
+      }
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [menuOpen, onMenuOpenChange, task.id])
+
   // Don't show swipe visuals when dragging via dnd-kit
   const effectiveSwipeX = isDragging ? 0 : swipeX
   const showCompleteBg = effectiveSwipeX < -40 && !task.done
@@ -170,11 +200,17 @@ export default function TaskItem({
           data-nest-target={task.id}
           aria-label={`Drop a task here to make it a subtask of ${task.title}`}
           className={`absolute left-1/4 right-14 top-1/4 bottom-1/4 z-10 rounded-md border-2 border-dashed pointer-events-none transition-colors ${
-            isNestTargetOver
+            isNestTargetOver || nestingTargetId === task.id
               ? 'border-honey bg-honey/15 dark:bg-honey/20'
               : 'border-transparent'
           }`}
-        />
+        >
+          {nestingTargetId === task.id && (
+            <span className="absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-honey px-2 py-1 text-xs font-medium text-white shadow">
+              Drop to add as subtask
+            </span>
+          )}
+        </div>
         {/* Fold caret (only when this task has children) */}
         {hasChildren ? (
           <button
@@ -248,16 +284,40 @@ export default function TaskItem({
           >
             <Check className="w-4 h-4" />
           </button>
-          <a
-            href={vikunjaUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600"
-            onClick={(e) => e.stopPropagation()}
-            aria-label="Open in Vikunja"
-          >
-            <ExternalLink className="w-4 h-4" />
-          </a>
+          <div ref={menuRef} className="relative">
+            <button
+              type="button"
+              onClick={() => onMenuOpenChange(task.id, !menuOpen)}
+              className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600"
+              aria-label="Task actions"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
+            {menuOpen && (
+              <div data-composer-keep-open role="menu" className="absolute right-0 top-9 z-40 min-w-44 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { onMenuOpenChange(task.id, false); onAddSubtask(task.id) }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
+                >
+                  <Plus className="h-4 w-4" /> Add subtask
+                </button>
+                <a
+                  role="menuitem"
+                  href={vikunjaUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(event) => { event.stopPropagation(); onMenuOpenChange(task.id, false) }}
+                  className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
+                >
+                  <ExternalLink className="h-4 w-4" /> Open in Vikunja
+                </a>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

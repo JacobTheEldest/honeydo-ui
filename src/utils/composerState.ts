@@ -6,39 +6,66 @@
  * pure lets the interaction rules be regression-tested without a DOM.
  */
 
+export interface ComposerPlacement {
+  parentId: number | null
+  beforeTaskId: number | null
+  afterTaskId: number | null
+}
+
 export interface ComposerState {
   open: boolean
+  instanceId: number
   title: string
   error: string | null
+  placement: ComposerPlacement
 }
 
 export type ComposerEvent =
   | { type: 'open' }
+  | { type: 'openAt'; placement: ComposerPlacement }
+  | { type: 'move'; placement: ComposerPlacement }
   | { type: 'close' }
   | { type: 'titleChanged'; title: string }
-  | { type: 'submitSucceeded' }
-  | { type: 'submitFailed'; message: string }
+  | { type: 'submitSucceeded'; taskId?: number; instanceId: number }
+  | { type: 'submitFailed'; message: string; instanceId: number }
 
-export const initialComposerState: ComposerState = { open: false, title: '', error: null }
+export const initialComposerState: ComposerState = {
+  open: false,
+  instanceId: 0,
+  title: '',
+  error: null,
+  placement: { parentId: null, beforeTaskId: null, afterTaskId: null },
+}
 
 export function composerReducer(state: ComposerState, event: ComposerEvent): ComposerState {
   switch (event.type) {
     case 'open':
-      // Fresh open starts empty; a stale error from a prior attempt is gone.
-      return { open: true, title: '', error: null }
+      // Fresh root composer starts at the top of the root sibling group.
+      return { ...initialComposerState, open: true, instanceId: state.instanceId + 1 }
+    case 'openAt':
+      return { ...initialComposerState, open: true, instanceId: state.instanceId + 1, placement: event.placement }
+    case 'move':
+      return state.open ? { ...state, placement: event.placement, error: null } : state
     case 'close':
-      // Escape, outside click, and the FAB all cancel without creating anything.
-      return { open: false, title: '', error: null }
+      return { ...initialComposerState, instanceId: state.instanceId }
     case 'titleChanged':
       return { ...state, title: event.title, error: null }
     case 'submitSucceeded':
-      // Keep the composer open with an empty title and restored focus so
-      // another task can be added immediately. A composer the user already
-      // dismissed mid-request stays closed.
-      return { ...state, title: '', error: null }
+      // Ignore responses from a dismissed composer if a newer one was opened.
+      if (!state.open || state.instanceId !== event.instanceId) return state
+      // After insertion, keep composing immediately after the created task.
+      return {
+        ...state,
+        title: '',
+        error: null,
+        placement: event.taskId === undefined
+          ? state.placement
+          : { ...state.placement, beforeTaskId: null, afterTaskId: event.taskId },
+      }
     case 'submitFailed':
-      // Keep the composer open with the title preserved for a retry.
-      return { ...state, error: event.message }
+      return state.open && state.instanceId === event.instanceId
+        ? { ...state, error: event.message }
+        : state
   }
 }
 

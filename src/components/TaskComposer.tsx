@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { useDraggable } from '@dnd-kit/core'
+import { CSS } from '@dnd-kit/utilities'
 import { GripVertical, Plus } from 'lucide-react'
 import {
   shouldCloseOnOutsideClick,
@@ -9,23 +11,26 @@ import {
 interface TaskComposerProps {
   state: ComposerState
   dispatch: (event: ComposerEvent) => void
-  onCreate: (title: string) => Promise<void>
+  onCreate: (title: string, placement: ComposerState['placement']) => Promise<number>
 }
 
-/**
- * Transient new-task row rendered above the root task tree. It mirrors the
- * TaskItem rename-field look so adding a task feels like editing one; it is
- * not draggable and never becomes a child task.
- */
+/** A transient, draggable insertion row; it is persisted only on submit. */
 export default function TaskComposer({ state, dispatch, onCreate }: TaskComposerProps) {
   const containerRef = useRef<HTMLFormElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const [submitting, setSubmitting] = useState(false)
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: 'task-composer',
+    disabled: !state.open,
+  })
+  const dragStyle = transform
+    ? { transform: CSS.Translate.toString(transform), zIndex: 30 }
+    : undefined
 
-  // Auto-focus the input whenever the composer opens.
+  // Auto-focus when newly opened and after each insertion.
   useEffect(() => {
     if (state.open) inputRef.current?.focus()
-  }, [state.open])
+  }, [state.open, state.placement.afterTaskId])
 
   // Dismiss on click/tap anywhere outside the composer (the FAB toggle is
   // excluded here; its own handler toggles the composer).
@@ -36,7 +41,11 @@ export default function TaskComposer({ state, dispatch, onCreate }: TaskComposer
       const outside = shouldCloseOnOutsideClick(
         event.target,
         (target) => composer !== null && target instanceof Node && composer.contains(target),
-        (target) => target instanceof Element && target.closest('[data-composer-toggle]') !== null
+        (target) => target instanceof Element && (
+          target.closest('[data-composer-toggle]') !== null ||
+          target.closest('[data-composer-keep-open]') !== null ||
+          target.closest('[data-sortable-id] button') !== null
+        )
       )
       if (outside) dispatch({ type: 'close' })
     }
@@ -52,12 +61,14 @@ export default function TaskComposer({ state, dispatch, onCreate }: TaskComposer
     if (!trimmed || submitting) return
     setSubmitting(true)
     try {
-      await onCreate(trimmed)
-      dispatch({ type: 'submitSucceeded' })
+      await onCreate(trimmed, state.placement).then((taskId) => {
+        dispatch({ type: 'submitSucceeded', taskId, instanceId: state.instanceId })
+      })
     } catch (error) {
       dispatch({
         type: 'submitFailed',
         message: error instanceof Error ? error.message : 'Could not add this task. Try again.',
+        instanceId: state.instanceId,
       })
     } finally {
       setSubmitting(false)
@@ -75,17 +86,26 @@ export default function TaskComposer({ state, dispatch, onCreate }: TaskComposer
 
   return (
     <form
-      ref={containerRef}
+      ref={(node) => {
+        containerRef.current = node
+        setNodeRef(node)
+      }}
       data-task-composer
+      style={{ ...dragStyle, opacity: isDragging ? 0.55 : 1 }}
       onSubmit={handleSubmit}
       className="relative flex items-center gap-2 px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700"
     >
-      {/* Spacers mirroring TaskItem's caret and drag handle keep the input
-          aligned with an existing task's rename field. */}
       <span aria-hidden="true" className="w-4 shrink-0" />
-      <span aria-hidden="true" className="shrink-0 p-1">
-        <GripVertical className="w-5 h-5 invisible" />
-      </span>
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        data-drag-handle
+        aria-label="Drag to place new task"
+        className="text-gray-300 dark:text-gray-600 cursor-grab active:cursor-grabbing shrink-0 p-1 touch-none"
+      >
+        <GripVertical className="w-5 h-5" />
+      </button>
       <div className="flex-1 min-w-0">
         <input
           ref={inputRef}

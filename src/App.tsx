@@ -34,6 +34,7 @@ import {
   positionToDueDate,
   dueDateToPosition,
   getMidpointPosition,
+  getSequentialPosition,
   needsRebalance,
   rebalancePositions,
   getTopPosition,
@@ -82,6 +83,7 @@ export default function App() {
     error,
     fetchTasks,
     createTask,
+    createSubtask,
     updateTask,
     persistTaskOrdering,
     changeTaskParent,
@@ -94,6 +96,11 @@ export default function App() {
   const [honeyDoLabelId, setHoneyDoLabelId] = useState<number | null>(null)
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set())
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null)
+  const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null)
+  const createdPositionsRef = useRef(new Map<number, { parentId: number | null; position: number }>())
+  const [nestingTargetId, setNestingTargetId] = useState<number | null>(null)
+  const expansionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const expansionTargetRef = useRef<number | null>(null)
   const [reorderDrop, setReorderDrop] = useState<ReorderDrop>(null)
   const reorderDropRef = useRef<ReorderDrop>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
@@ -201,6 +208,10 @@ export default function App() {
       return collisions
     }
 
+    if (String(args.active.id) === 'task-composer') {
+      return remember(pointerWithin(args))
+    }
+
     const specialHits = pointerWithin(args)
     const rootHits = specialHits.filter((collision) => String(collision.id) === ROOT_DROP_ID)
     if (rootHits.length > 0) return remember(rootHits)
@@ -257,6 +268,18 @@ export default function App() {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current)
   }, [])
 
+  const handleAddSubtask = useCallback((parentId: number) => {
+    setCollapsed((previous) => {
+      const next = new Set(previous)
+      next.delete(parentId)
+      return next
+    })
+    composerDispatch({
+      type: 'openAt',
+      placement: { parentId, beforeTaskId: null, afterTaskId: null },
+    })
+  }, [])
+
   const handleToggleCollapse = useCallback((taskId: number) => {
     setCollapsed((prev) => {
       const next = new Set(prev)
@@ -272,6 +295,10 @@ export default function App() {
 
   const handleExpandAll = useCallback(() => {
     setCollapsed(new Set())
+  }, [])
+
+  const handleMenuOpenChange = useCallback((taskId: number, open: boolean) => {
+    setOpenTaskMenuId((current) => open ? taskId : current === taskId ? null : current)
   }, [])
 
   const handleToggleDone = useCallback(
@@ -291,27 +318,104 @@ export default function App() {
   )
 
   const handleCreateTask = useCallback(
-    async (title: string) => {
-      if (!honeyDoLabelId) {
+    async (title: string, placement: import('./utils/composerState.ts').ComposerPlacement) => {
+      const parent = placement.parentId === null ? undefined : byId.get(placement.parentId)
+      const siblingIds = placement.parentId === null
+        ? taskTree.map((node) => node.id)
+        : (() => {
+            const find = (nodes: TaskTreeNode[]): TaskTreeNode | undefined => {
+              for (const node of nodes) {
+                if (node.id === placement.parentId) return node
+                const found = find(node.children)
+                if (found) return found
+              }
+              return undefined
+            }
+            return find(taskTree)?.children.map((node) => node.id) ?? []
+          })()
+      const beforeIndex = placement.beforeTaskId === null ? -1 : siblingIds.indexOf(placement.beforeTaskId)
+      const beforeTask = byId.get(placement.beforeTaskId ?? -1)
+      const afterTask = byId.get(placement.afterTaskId ?? -1)
+      const firstTask = byId.get(siblingIds[0] ?? -1)
+      const lastTask = byId.get(siblingIds[siblingIds.length - 1] ?? -1)
+      const createdPositions = createdPositionsRef.current
+      const createdAfter = placement.afterTaskId === null ? undefined : createdPositions.get(placement.afterTaskId)
+      const createdBefore = placement.beforeTaskId === null ? undefined : createdPositions.get(placement.beforeTaskId)
+      const isSequentialInsertion = createdAfter?.parentId === placement.parentId
+      const createdSiblingPositions = [...createdPositions.entries()]
+        .filter(([, entry]) => entry.parentId === placement.parentId)
+        .map(([, entry]) => entry.position)
+      const effectiveLastPosition = Math.max(
+        lastTask ? dueDateToPosition(lastTask.due_date) : -Infinity,
+        ...createdSiblingPositions
+      )
+      let position: number
+      if (isSequentialInsertion && createdAfter) {
+        const siblingPositions = [
+          ...siblingIds.map((id) => {
+            const cached = createdPositions.get(id)
+            const sibling = byId.get(id)
+            return cached?.position ?? (sibling ? dueDateToPosition(sibling.due_date) : NaN)
+          }),
+          ...createdSiblingPositions,
+        ]
+        position = getSequentialPosition(createdAfter.position, siblingPositions)
+      } else if (placement.beforeTaskId !== null && beforeTask) {
+        const nextPosition = dueDateToPosition(beforeTask.due_date)
+        const previousTask = beforeIndex > 0 ? byId.get(siblingIds[beforeIndex - 1]) : undefined
+        position = previousTask
+          ? (dueDateToPosition(previousTask.due_date) + nextPosition) / 2
+          : nextPosition - 1
+      } else if (placement.afterTaskId !== null && afterTask) {
+        const previousPosition = dueDateToPosition(afterTask.due_date)
+        const afterIndex = siblingIds.indexOf(placement.afterTaskId)
+        const nextTask = byId.get(siblingIds[afterIndex + 1] ?? -1)
+        position = nextTask
+          ? (previousPosition + dueDateToPosition(nextTask.due_date)) / 2
+          : previousPosition + 1
+      } else if (placement.parentId !== null && createdBefore) {
+        position = createdBefore.position - 1
+      } else if (placement.parentId !== null && firstTask) {
+        position = dueDateToPosition(firstTask.due_date) - 1
+      } else if (placement.parentId !== null) {
+        position = Number.isFinite(effectiveLastPosition) ? effectiveLastPosition + 1 : 0
+      } else {
+        const rootPositions = taskTree.map((root) => dueDateToPosition(root.due_date)).filter(Number.isFinite)
+        position = Math.min(getTopPosition(), ...rootPositions) - 1
+      }
+      if (parent && createdSiblingPositions.length > 0 && !beforeTask && !afterTask && !isSequentialInsertion) {
+        position = Math.max(position, effectiveLastPosition + 1)
+      }
+      if (!parent && createdSiblingPositions.length > 0 && !beforeTask && !afterTask && !isSequentialInsertion) {
+        position = effectiveLastPosition + 1
+      }
+      if (!parent && !honeyDoLabelId) {
         throw new Error('The Honey-Do label is unavailable. Refresh the task list and try again.')
       }
-      // Place the new root strictly above every existing root so it appears
-      // at the top of the list immediately, without a refresh.
-      const rootPositions = taskTree
-        .map((root) => dueDateToPosition(root.due_date))
-        .filter(Number.isFinite)
-      const topPosition = Math.min(getTopPosition(), ...rootPositions) - 1
-      const task = await createTask({
-        title,
-        project_id: DEFAULT_PROJECT_ID,
-        due_date: positionToDueDate(topPosition),
-      })
-      await addLabelToTask(task.id, honeyDoLabelId)
+      const createdTask = parent
+        ? await createSubtask({ title, project_id: parent.project_id, due_date: positionToDueDate(position) }, parent.id)
+        : await createTask({ title, project_id: DEFAULT_PROJECT_ID, due_date: positionToDueDate(position) })
+      createdPositionsRef.current.set(createdTask.id, { parentId: placement.parentId, position })
+      const task = createdTask
+      if (!parent && honeyDoLabelId !== null) {
+        try {
+          await addLabelToTask(task.id, honeyDoLabelId)
+        } catch (error) {
+          await fetchTasks().catch(() => {})
+          throw error
+        }
+      }
+      return task.id
     },
-    [honeyDoLabelId, createTask, addLabelToTask, taskTree]
+    [byId, taskTree, createTask, createSubtask, honeyDoLabelId, addLabelToTask, fetchTasks]
   )
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
+    if (String(event.active.id) === 'task-composer') {
+      reorderDropRef.current = null
+      setReorderDrop(null)
+      return
+    }
     const decoded = decodeGroupItemId(String(event.active.id))
     const rects = new Map<string, DOMRectReadOnly>()
     document.querySelectorAll<HTMLElement>('[data-sortable-id]').forEach((element) => {
@@ -326,6 +430,10 @@ export default function App() {
   }, [])
 
   const handleDragCancel = useCallback(() => {
+    if (expansionTimerRef.current) clearTimeout(expansionTimerRef.current)
+    expansionTimerRef.current = null
+    expansionTargetRef.current = null
+    setNestingTargetId(null)
     dragStartRectsRef.current.clear()
     lastCollisionIdRef.current = null
     reorderDropRef.current = null
@@ -336,15 +444,33 @@ export default function App() {
   const handleDragOver = useCallback(
     (event: DragOverEvent) => {
       const overId = event.over ? String(event.over.id) : ''
+      const nestId = overId.startsWith('nest::') ? Number(overId.slice('nest::'.length)) : null
+      if (nestId !== expansionTargetRef.current) {
+        if (expansionTimerRef.current) clearTimeout(expansionTimerRef.current)
+        expansionTimerRef.current = null
+        expansionTargetRef.current = nestId
+        setNestingTargetId(nestId)
+        if (nestId !== null && collapsed.has(nestId)) {
+          expansionTimerRef.current = setTimeout(() => {
+            setCollapsed((previous) => {
+              const next = new Set(previous)
+              next.delete(nestId)
+              return next
+            })
+            expansionTimerRef.current = null
+          }, 600)
+        }
+      }
+      const isComposerDrag = String(event.active.id) === 'task-composer'
       if (!event.over || !overId || overId === ROOT_DROP_ID || overId.startsWith('nest::')) {
         reorderDropRef.current = null
         setReorderDrop(null)
         return
       }
       const overTarget = event.over
-      const active = decodeGroupItemId(String(event.active.id))
+      const active = isComposerDrag ? null : decodeGroupItemId(String(event.active.id))
       const over = decodeGroupItemId(overId)
-      if (!active || !over || active.parent !== over.parent || active.taskId === over.taskId) {
+      if (!over || (!isComposerDrag && (!active || active.parent !== over.parent || active.taskId === over.taskId))) {
         reorderDropRef.current = null
         setReorderDrop(null)
         return
@@ -356,7 +482,10 @@ export default function App() {
         changedTouches?: TouchList
       }
       const startY = source.touches?.[0]?.clientY ?? source.changedTouches?.[0]?.clientY ?? source.clientY
-      const pointerY = startY === undefined ? overTarget.rect.top + overTarget.rect.height / 2 : startY + event.delta.y
+      const translatedRect = event.active.rect.current.translated
+      const pointerY = startY === undefined
+        ? (translatedRect ? translatedRect.top + translatedRect.height / 2 : overTarget.rect.top + overTarget.rect.height / 2)
+        : startY + event.delta.y
       const nextDrop = {
         taskId: over.taskId,
         edge: pointerY < overTarget.rect.top + overTarget.rect.height / 2 ? 'before' as const : 'after' as const,
@@ -364,13 +493,51 @@ export default function App() {
       reorderDropRef.current = nextDrop
       setReorderDrop(nextDrop)
     },
-    []
+    [collapsed]
   )
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const effectiveOverId = lastCollisionIdRef.current ?? (event.over ? String(event.over.id) : null)
       const currentReorderDrop = reorderDropRef.current
+      if (expansionTimerRef.current) clearTimeout(expansionTimerRef.current)
+      expansionTimerRef.current = null
+      expansionTargetRef.current = null
+      setNestingTargetId(null)
+      if (String(event.active.id) === 'task-composer') {
+        if (!effectiveOverId) return
+        if (effectiveOverId.startsWith('nest::')) {
+          const parentId = Number(effectiveOverId.slice('nest::'.length))
+          if (!Number.isFinite(parentId) || !byId.has(parentId)) return
+          setCollapsed((previous) => {
+            const next = new Set(previous)
+            next.delete(parentId)
+            return next
+          })
+          composerDispatch({ type: 'move', placement: { parentId, beforeTaskId: null, afterTaskId: null } })
+          return
+        }
+        const target = decodeGroupItemId(effectiveOverId)
+        if (!target) return
+        const group = groupBySortableId.get(effectiveOverId)
+        const targetIndex = group?.items.indexOf(target.taskId) ?? -1
+        const overTarget = event.over
+        const after = currentReorderDrop?.taskId === target.taskId
+          ? currentReorderDrop.edge === 'after'
+          : (() => {
+              const translatedRect = event.active.rect.current.translated
+              const pointerY = translatedRect
+                ? translatedRect.top + translatedRect.height / 2
+                : overTarget
+                  ? overTarget.rect.top + overTarget.rect.height / 2
+                  : 0
+              return Boolean(overTarget && pointerY >= overTarget.rect.top + overTarget.rect.height / 2)
+            })()
+        const beforeTaskId = after ? (group?.items[targetIndex + 1] ?? null) : target.taskId
+        const afterTaskId = after ? target.taskId : (group?.items[targetIndex - 1] ?? null)
+        composerDispatch({ type: 'move', placement: { parentId: target.parent === ROOT_PARENT ? null : target.parent, beforeTaskId, afterTaskId } })
+        return
+      }
       dragStartRectsRef.current.clear()
       lastCollisionIdRef.current = null
       reorderDropRef.current = null
@@ -597,19 +764,31 @@ export default function App() {
     ancestorDragging = false
   ): ReactNode => {
     const visible = nodes.filter((n) => !hiddenByAncestor.has(n.id))
-    if (visible.length === 0) return null
+    const parentId = parentScope === ROOT_PARENT ? null : parentScope
+    const placement = composerState.placement
+    const placementMatches = composerState.open && placement.parentId === parentId
+    const beforeIndex = placement.beforeTaskId === null ? -1 : visible.findIndex((node) => node.id === placement.beforeTaskId)
+    const afterIndex = placement.afterTaskId === null ? -1 : visible.findIndex((node) => node.id === placement.afterTaskId)
+    const insertionIndex = beforeIndex >= 0 ? beforeIndex : afterIndex >= 0 ? afterIndex + 1 : 0
+    if (visible.length === 0 && !placementMatches) return null
     return (
       <SortableContext
         key={String(parentScope)}
         items={visible.map((n) => encodeGroupItemId(parentScope, n.id))}
         strategy={verticalListSortingStrategy}
       >
-        {visible.map((node) => {
+        {placementMatches && insertionIndex === 0 && (
+          <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} />
+        )}
+        {visible.map((node, index) => {
           const isCollapsed = collapsed.has(node.id)
           const isActive = activeTaskId === node.id
           const subtreeIsDragging = ancestorDragging || isActive
           return (
             <Fragment key={`${parentScope}:${node.id}`}>
+              {placementMatches && insertionIndex === index && index > 0 && (
+                <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} />
+              )}
               <TaskItem
                 task={node}
                 sortableId={encodeGroupItemId(parentScope, node.id)}
@@ -619,16 +798,23 @@ export default function App() {
                 onToggleCollapse={handleToggleCollapse}
                 onToggleDone={handleToggleDone}
                 onUpdateTitle={handleUpdateTitle}
+                onAddSubtask={handleAddSubtask}
+                menuOpen={openTaskMenuId === node.id}
+                onMenuOpenChange={handleMenuOpenChange}
                 showCompleted={showCompleted}
                 isInDraggedSubtree={ancestorDragging && !isActive}
                 parentContext={node.parentContext}
                 dropEdge={reorderDrop?.taskId === node.id ? reorderDrop.edge : undefined}
+                nestingTargetId={nestingTargetId}
               />
               {!isCollapsed && node.children.length > 0 &&
                 renderNodes(node.children, node.id, subtreeIsDragging)}
             </Fragment>
           )
         })}
+        {placementMatches && insertionIndex === visible.length && (
+          <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} />
+        )}
       </SortableContext>
     )
   }
@@ -734,7 +920,6 @@ export default function App() {
         )}
 
         <RootPromotionDropTarget visible={activeTaskId !== null} />
-        <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} />
         {renderNodes(taskTree, ROOT_PARENT)}
       </main>
       <DragOverlay dropAnimation={null}>
