@@ -28,6 +28,7 @@ import { useDarkMode } from './hooks/useDarkMode.ts'
 import TaskItem from './components/TaskItem.tsx'
 import TaskSubtreePreview from './components/TaskSubtreePreview.tsx'
 import TaskComposer from './components/TaskComposer.tsx'
+import UnlabelConfirmDialog from './components/UnlabelConfirmDialog.tsx'
 import FAB from './components/FAB.tsx'
 import { composerReducer, initialComposerState } from './utils/composerState.ts'
 import {
@@ -49,6 +50,7 @@ import {
   type ParentScope,
 } from './utils/taskTree.ts'
 import { canPromoteToRoot, isSelfOrDescendant, reorderAtDropEdge } from './utils/hierarchyMutations.ts'
+import { countDescendants, planUnlabel, type UnlabelDecision } from './utils/unlabel.ts'
 import { HONEYDO_LABEL, DEFAULT_PROJECT_ID } from './config.ts'
 
 const ROOT_DROP_ID = 'root-promote'
@@ -87,6 +89,7 @@ export default function App() {
     updateTask,
     persistTaskOrdering,
     changeTaskParent,
+    removeFromHoneyDo,
     addLabelToTask,
     createLabel,
   } = useVikunjaApi()
@@ -97,6 +100,7 @@ export default function App() {
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set())
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null)
   const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null)
+  const [unlabelRequest, setUnlabelRequest] = useState<{ taskId: number; busy: boolean } | null>(null)
   const createdPositionsRef = useRef(new Map<number, { parentId: number | null; position: number }>())
   const [nestingTargetId, setNestingTargetId] = useState<number | null>(null)
   const expansionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -300,6 +304,52 @@ export default function App() {
   const handleMenuOpenChange = useCallback((taskId: number, open: boolean) => {
     setOpenTaskMenuId((current) => open ? taskId : current === taskId ? null : current)
   }, [])
+
+  const unlabelNode = useMemo<TaskTreeNode | null>(() => {
+    if (unlabelRequest === null) return null
+    const find = (nodes: TaskTreeNode[]): TaskTreeNode | null => {
+      for (const node of nodes) {
+        if (node.id === unlabelRequest.taskId) return node
+        const child = find(node.children)
+        if (child) return child
+      }
+      return null
+    }
+    return find(taskTree)
+  }, [unlabelRequest, taskTree])
+
+  const handleUnlabelOpen = useCallback((taskId: number) => {
+    setOpenTaskMenuId(null)
+    setUnlabelRequest({ taskId, busy: false })
+  }, [])
+
+  const handleUnlabelDecision = useCallback(async (decision: UnlabelDecision) => {
+    if (decision.type === 'cancel') {
+      setUnlabelRequest(null)
+      return
+    }
+    const node = unlabelNode
+    if (!node || unlabelRequest === null || unlabelRequest.busy) return
+    const honeyDoLabelId = node.labels?.find((label) => label.title === HONEYDO_LABEL)?.id
+    if (honeyDoLabelId === undefined) {
+      notify('The Honey-Do label is unavailable. Refresh the task list and try again.')
+      setUnlabelRequest(null)
+      return
+    }
+    const plan = planUnlabel(decision, node, honeyDoLabelId)
+    if (!plan) {
+      setUnlabelRequest(null)
+      return
+    }
+    setUnlabelRequest((current) => current === null ? null : { ...current, busy: true })
+    try {
+      await removeFromHoneyDo(plan)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not remove this task from Honey-Do.')
+    } finally {
+      setUnlabelRequest(null)
+    }
+  }, [unlabelNode, unlabelRequest, removeFromHoneyDo, notify])
 
   const handleToggleDone = useCallback(
     (id: number, done: boolean) => {
@@ -799,6 +849,8 @@ export default function App() {
                 onToggleDone={handleToggleDone}
                 onUpdateTitle={handleUpdateTitle}
                 onAddSubtask={handleAddSubtask}
+                onUnlabel={handleUnlabelOpen}
+                isHoneyDoLabeled={Boolean(node.labels?.some((label) => label.title === HONEYDO_LABEL))}
                 menuOpen={openTaskMenuId === node.id}
                 onMenuOpenChange={handleMenuOpenChange}
                 showCompleted={showCompleted}
@@ -926,6 +978,17 @@ export default function App() {
         {activeNode ? <TaskSubtreePreview node={activeNode} collapsed={collapsed} /> : null}
       </DragOverlay>
       </DndContext>
+
+      {unlabelRequest && unlabelNode && (
+        <UnlabelConfirmDialog
+          taskTitle={unlabelNode.title}
+          descendantCount={countDescendants(unlabelNode)}
+          busy={unlabelRequest.busy}
+          onCancel={() => handleUnlabelDecision({ type: 'cancel' })}
+          onConfirm={(scope) => handleUnlabelDecision({ type: 'confirm', scope })}
+          returnFocusSelector={`[data-task-id="${unlabelRequest.taskId}"] button[aria-label="Task actions"]`}
+        />
+      )}
 
       {toastMessage && (
         <div

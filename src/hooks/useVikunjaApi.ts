@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { VikunjaTask, VikunjaLabel, CreateTaskPayload, UpdateTaskPayload } from '../types/vikunja.ts'
 import { HONEYDO_LABEL } from '../config.ts'
 import { applyParentChange, type ParentChange } from '../utils/hierarchyMutations.ts'
+import { applyUnlabel, type UnlabelPlan } from '../utils/unlabel.ts'
 
 const API_BASE = '/api/v1'
 const DETAIL_CONCURRENCY = 8
@@ -281,6 +282,18 @@ export function useVikunjaApi() {
     )
   }, [labels])
 
+  /**
+   * Delete a label link (the labels array in a task POST body is ignored by
+   * Vikunja) and mirror the removal in local state for immediate rendering.
+   */
+  const removeLabelFromTask = useCallback(async (taskId: number, labelId: number) => {
+    await apiRequest(`/tasks/${taskId}/labels/${labelId}`, { method: 'DELETE' })
+    setTasks((prev) => prev.map((task) => task.id === taskId
+      ? { ...task, labels: (task.labels ?? []).filter((label) => label.id !== labelId) }
+      : task
+    ))
+  }, [])
+
   const changeTaskParent = useCallback(async (change: ParentChange) => {
     const writeDueDate = async (taskId: number, dueDate: string | null) => {
       const current = tasks.find((task) => task.id === taskId)
@@ -304,16 +317,28 @@ export function useVikunjaApi() {
       },
       setDueDate: writeDueDate,
       addLabel: addLabelToTask,
-      removeLabel: async (taskId, labelId) => {
-        await apiRequest(`/tasks/${taskId}/labels/${labelId}`, { method: 'DELETE' })
-        setTasks((prev) => prev.map((task) => task.id === taskId
-          ? { ...task, labels: task.labels.filter((label) => label.id !== labelId) }
-          : task
-        ))
+      removeLabel: removeLabelFromTask,
+      refresh: fetchTasks,
+    })
+  }, [tasks, updateTask, addLabelToTask, removeLabelFromTask, fetchTasks])
+
+  /**
+   * Remove the Honey-Do label and its sorting due_date from each target task.
+   * Vikunja POST /tasks/{id} is a full-resource write, so due-date clearing
+   * goes through updateTask's read-modify-write of the complete task object.
+   * applyUnlabel refetches at the end and reports partial failures.
+   */
+  const removeFromHoneyDo = useCallback(async (plan: UnlabelPlan) => {
+    await applyUnlabel(plan, {
+      removeLabel: removeLabelFromTask,
+      setDueDate: async (taskId, dueDate) => {
+        const current = tasks.find((task) => task.id === taskId)
+        if (!current) throw new Error(`Task ${taskId} is no longer loaded`)
+        await updateTask(current, { due_date: dueDate })
       },
       refresh: fetchTasks,
     })
-  }, [tasks, updateTask, addLabelToTask, fetchTasks])
+  }, [tasks, updateTask, removeLabelFromTask, fetchTasks])
 
   const createLabel = useCallback(async (title: string) => {
     const label = await apiFetch<VikunjaLabel>('/labels', {
@@ -339,6 +364,7 @@ export function useVikunjaApi() {
     updateTask,
     persistTaskOrdering,
     changeTaskParent,
+    removeFromHoneyDo,
     addLabelToTask,
     createLabel,
   }
