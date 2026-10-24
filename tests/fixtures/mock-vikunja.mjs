@@ -101,6 +101,31 @@ app.delete('/api/v1/tasks/:id/labels/:labelId', (req, res) => {
   task.labels = task.labels.filter((label) => label.id !== Number(req.params.labelId))
   res.status(200).json({})
 })
+// New-task composer support: task creation at a project, plus a deterministic
+// failure trigger ("force-error" title) for exercising the composer's error path.
+let nextCreatedId = 100
+app.put('/api/v1/projects/:id/tasks', (req, res) => {
+  requests.push({ method: req.method, path: req.path, body: req.body })
+  if (req.body?.title === 'force-error') {
+    return res.status(500).json({ message: 'forced fixture failure' })
+  }
+  const id = nextCreatedId++
+  const task = {
+    id,
+    title: req.body?.title ?? '',
+    description: '',
+    done: false,
+    done_at: null,
+    due_date: req.body?.due_date ?? null,
+    project_id: Number(req.params.id),
+    labels: [],
+    created: new Date().toISOString(),
+    updated: new Date().toISOString(),
+    priority: 0,
+  }
+  tasks.set(id, task)
+  res.json(task)
+})
 app.get('/api/v1/test-state', (_req, res) => {
   res.json({
     parents: Object.fromEntries(parents),

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef, Fragment, type ReactNode } from 'react'
+import { useEffect, useState, useCallback, useMemo, useReducer, useRef, Fragment, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useDrag } from '@use-gesture/react'
 import {
@@ -27,7 +27,9 @@ import { useVikunjaApi } from './hooks/useVikunjaApi.ts'
 import { useDarkMode } from './hooks/useDarkMode.ts'
 import TaskItem from './components/TaskItem.tsx'
 import TaskSubtreePreview from './components/TaskSubtreePreview.tsx'
+import TaskComposer from './components/TaskComposer.tsx'
 import FAB from './components/FAB.tsx'
+import { composerReducer, initialComposerState } from './utils/composerState.ts'
 import {
   positionToDueDate,
   dueDateToPosition,
@@ -95,6 +97,7 @@ export default function App() {
   const [reorderDrop, setReorderDrop] = useState<ReorderDrop>(null)
   const reorderDropRef = useRef<ReorderDrop>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const [composerState, composerDispatch] = useReducer(composerReducer, initialComposerState)
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dragStartRectsRef = useRef<Map<string, DOMRectReadOnly>>(new Map())
   const lastCollisionIdRef = useRef<string | null>(null)
@@ -289,15 +292,23 @@ export default function App() {
 
   const handleCreateTask = useCallback(
     async (title: string) => {
-      if (!honeyDoLabelId) return
+      if (!honeyDoLabelId) {
+        throw new Error('The Honey-Do label is unavailable. Refresh the task list and try again.')
+      }
+      // Place the new root strictly above every existing root so it appears
+      // at the top of the list immediately, without a refresh.
+      const rootPositions = taskTree
+        .map((root) => dueDateToPosition(root.due_date))
+        .filter(Number.isFinite)
+      const topPosition = Math.min(getTopPosition(), ...rootPositions) - 1
       const task = await createTask({
         title,
         project_id: DEFAULT_PROJECT_ID,
-        due_date: positionToDueDate(getTopPosition()),
+        due_date: positionToDueDate(topPosition),
       })
       await addLabelToTask(task.id, honeyDoLabelId)
     },
-    [honeyDoLabelId, createTask, addLabelToTask]
+    [honeyDoLabelId, createTask, addLabelToTask, taskTree]
   )
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
@@ -713,7 +724,7 @@ export default function App() {
           </div>
         )}
 
-        {!loading && !error && taskTree.length === 0 && (
+        {!composerState.open && !loading && !error && taskTree.length === 0 && (
           <div className="px-4 py-20 text-center">
             <p className="text-gray-400 dark:text-gray-500 text-lg">No Honey-Do tasks yet</p>
             <p className="text-gray-400 dark:text-gray-500 text-sm mt-1">
@@ -723,6 +734,7 @@ export default function App() {
         )}
 
         <RootPromotionDropTarget visible={activeTaskId !== null} />
+        <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} />
         {renderNodes(taskTree, ROOT_PARENT)}
       </main>
       <DragOverlay dropAnimation={null}>
@@ -741,7 +753,10 @@ export default function App() {
       )}
 
       {/* FAB */}
-      <FAB onCreate={handleCreateTask} />
+      <FAB
+        open={composerState.open}
+        onToggle={() => composerDispatch({ type: composerState.open ? 'close' : 'open' })}
+      />
     </div>
   )
 }
