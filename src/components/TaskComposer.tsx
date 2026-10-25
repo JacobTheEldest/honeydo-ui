@@ -93,7 +93,7 @@ export default function TaskComposer({ state, dispatch, onCreate }: TaskComposer
       data-task-composer
       style={{ ...dragStyle, opacity: isDragging ? 0.55 : 1 }}
       onSubmit={handleSubmit}
-      className="relative flex items-center gap-2 px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700"
+      className="relative flex items-center gap-2 px-4 py-3 bg-honey-light dark:bg-honey/10 border-y-2 border-honey/60 dark:border-honey/40 shadow-sm"
     >
       <span aria-hidden="true" className="w-4 shrink-0" />
       <button

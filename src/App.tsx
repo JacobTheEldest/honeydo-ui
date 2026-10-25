@@ -555,6 +555,8 @@ export default function App() {
       expansionTargetRef.current = null
       setNestingTargetId(null)
       if (String(event.active.id) === 'task-composer') {
+        reorderDropRef.current = null
+        setReorderDrop(null)
         if (!effectiveOverId) return
         if (effectiveOverId.startsWith('nest::')) {
           const parentId = Number(effectiveOverId.slice('nest::'.length))
@@ -572,17 +574,19 @@ export default function App() {
         const group = groupBySortableId.get(effectiveOverId)
         const targetIndex = group?.items.indexOf(target.taskId) ?? -1
         const overTarget = event.over
-        const after = currentReorderDrop?.taskId === target.taskId
-          ? currentReorderDrop.edge === 'after'
-          : (() => {
-              const translatedRect = event.active.rect.current.translated
-              const pointerY = translatedRect
-                ? translatedRect.top + translatedRect.height / 2
-                : overTarget
-                  ? overTarget.rect.top + overTarget.rect.height / 2
-                  : 0
-              return Boolean(overTarget && pointerY >= overTarget.rect.top + overTarget.rect.height / 2)
-            })()
+        const after = currentReorderDrop?.edge === 'after' && currentReorderDrop?.taskId === target.taskId
+          ? true
+          : currentReorderDrop?.taskId === target.taskId
+            ? currentReorderDrop.edge === 'after'
+            : (() => {
+                const translatedRect = event.active.rect.current.translated
+                const pointerY = translatedRect
+                  ? translatedRect.top + translatedRect.height / 2
+                  : overTarget
+                    ? overTarget.rect.top + overTarget.rect.height / 2
+                    : 0
+                return Boolean(overTarget && pointerY >= overTarget.rect.top + overTarget.rect.height / 2)
+              })()
         const beforeTaskId = after ? (group?.items[targetIndex + 1] ?? null) : target.taskId
         const afterTaskId = after ? target.taskId : (group?.items[targetIndex - 1] ?? null)
         composerDispatch({ type: 'move', placement: { parentId: target.parent === ROOT_PARENT ? null : target.parent, beforeTaskId, afterTaskId } })
