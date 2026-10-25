@@ -49,7 +49,7 @@ import {
   type TaskTreeNode,
   type ParentScope,
 } from './utils/taskTree.ts'
-import { canPromoteToRoot, isSelfOrDescendant, reorderAtDropEdge } from './utils/hierarchyMutations.ts'
+import { canPromoteToRoot, isSelfOrDescendant } from './utils/hierarchyMutations.ts'
 import { countDescendants, planUnlabel, type UnlabelDecision } from './utils/unlabel.ts'
 import { HONEYDO_LABEL, DEFAULT_PROJECT_ID } from './config.ts'
 
@@ -673,17 +673,12 @@ export default function App() {
       if (!group) return
 
       const oldIndex = group.items.indexOf(activeDecoded.taskId)
-      const edge = currentReorderDrop?.taskId === overDecoded.taskId
-        ? currentReorderDrop.edge
-        : 'after'
-      const reorderedIds = reorderAtDropEdge(
-        group.items,
-        activeDecoded.taskId,
-        overDecoded.taskId,
-        edge
-      )
+      const overIndex = group.items.indexOf(overDecoded.taskId)
+      if (oldIndex === -1 || overIndex === -1 || oldIndex === overIndex) return
+      const reorderedIds = Array.from(group.items)
+      const [moved] = reorderedIds.splice(oldIndex, 1)
+      reorderedIds.splice(overIndex, 0, moved)
       const newIndex = reorderedIds.indexOf(activeDecoded.taskId)
-      if (oldIndex === -1 || newIndex === oldIndex) return
       const groupTasks: import('./types/vikunja.ts').VikunjaTask[] = []
       for (const id of reorderedIds) {
         const sibling = byId.get(id)
