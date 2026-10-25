@@ -105,7 +105,6 @@ export default function App() {
   const [nestingTargetId, setNestingTargetId] = useState<number | null>(null)
   const expansionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const expansionTargetRef = useRef<number | null>(null)
-  const [reorderDrop, setReorderDrop] = useState<ReorderDrop>(null)
   const reorderDropRef = useRef<ReorderDrop>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [composerState, composerDispatch] = useReducer(composerReducer, initialComposerState)
@@ -463,7 +462,6 @@ export default function App() {
   const handleDragStart = useCallback((event: DragStartEvent) => {
     if (String(event.active.id) === 'task-composer') {
       reorderDropRef.current = null
-      setReorderDrop(null)
       return
     }
     const decoded = decodeGroupItemId(String(event.active.id))
@@ -475,7 +473,6 @@ export default function App() {
     dragStartRectsRef.current = rects
     lastCollisionIdRef.current = null
     reorderDropRef.current = null
-    setReorderDrop(null)
     setActiveTaskId(decoded?.taskId ?? null)
   }, [])
 
@@ -487,7 +484,6 @@ export default function App() {
     dragStartRectsRef.current.clear()
     lastCollisionIdRef.current = null
     reorderDropRef.current = null
-    setReorderDrop(null)
     setActiveTaskId(null)
   }, [])
 
@@ -514,7 +510,6 @@ export default function App() {
       const isComposerDrag = String(event.active.id) === 'task-composer'
       if (!event.over || !overId || overId === ROOT_DROP_ID || overId.startsWith('nest::')) {
         reorderDropRef.current = null
-        setReorderDrop(null)
         return
       }
       const overTarget = event.over
@@ -522,7 +517,6 @@ export default function App() {
       const over = decodeGroupItemId(overId)
       if (!over || (!isComposerDrag && (!active || active.parent !== over.parent || active.taskId === over.taskId))) {
         reorderDropRef.current = null
-        setReorderDrop(null)
         return
       }
 
@@ -541,7 +535,6 @@ export default function App() {
         edge: pointerY < overTarget.rect.top + overTarget.rect.height / 2 ? 'before' as const : 'after' as const,
       }
       reorderDropRef.current = nextDrop
-      setReorderDrop(nextDrop)
     },
     [collapsed]
   )
@@ -556,7 +549,6 @@ export default function App() {
       setNestingTargetId(null)
       if (String(event.active.id) === 'task-composer') {
         reorderDropRef.current = null
-        setReorderDrop(null)
         if (!effectiveOverId) return
         if (effectiveOverId.startsWith('nest::')) {
           const parentId = Number(effectiveOverId.slice('nest::'.length))
@@ -595,7 +587,6 @@ export default function App() {
       dragStartRectsRef.current.clear()
       lastCollisionIdRef.current = null
       reorderDropRef.current = null
-      setReorderDrop(null)
       setActiveTaskId(null)
 
       const activeDecoded = decodeGroupItemId(String(event.active.id))
@@ -860,7 +851,6 @@ export default function App() {
                 showCompleted={showCompleted}
                 isInDraggedSubtree={ancestorDragging && !isActive}
                 parentContext={node.parentContext}
-                dropEdge={reorderDrop?.taskId === node.id ? reorderDrop.edge : undefined}
                 nestingTargetId={nestingTargetId}
               />
               {!isCollapsed && node.children.length > 0 &&

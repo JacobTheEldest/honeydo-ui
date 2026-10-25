@@ -26,7 +26,6 @@ interface TaskItemProps {
   showCompleted: boolean
   isInDraggedSubtree: boolean
   parentContext?: string
-  dropEdge?: 'before' | 'after'
   nestingTargetId?: number | null
 }
 
@@ -47,7 +46,6 @@ export default function TaskItem({
   showCompleted,
   isInDraggedSubtree,
   parentContext,
-  dropEdge,
   nestingTargetId,
 }: TaskItemProps) {
   const [editing, setEditing] = useState(false)
@@ -166,15 +164,6 @@ export default function TaskItem({
         ${task.done && !showCompleted ? 'hidden' : ''}
       `}
     >
-      {dropEdge && (
-        <div
-          aria-hidden="true"
-          data-reorder-edge={dropEdge}
-          className={`absolute left-4 right-4 z-20 h-0.5 bg-honey shadow-[0_0_0_2px_rgba(255,255,255,0.75)] ${
-            dropEdge === 'before' ? 'top-0' : 'bottom-0'
-          }`}
-        />
-      )}
       {/* Swipe background layer */}
       <div
         className={`
