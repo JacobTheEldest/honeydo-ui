@@ -26,7 +26,6 @@ interface TaskItemProps {
   showCompleted: boolean
   isInDraggedSubtree: boolean
   parentContext?: string
-  nestingTargetId?: number | null
 }
 
 export default function TaskItem({
@@ -46,7 +45,6 @@ export default function TaskItem({
   showCompleted,
   isInDraggedSubtree,
   parentContext,
-  nestingTargetId,
 }: TaskItemProps) {
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(task.title)
@@ -62,7 +60,7 @@ export default function TaskItem({
     transition,
     isDragging,
   } = useSortable({ id: sortableId })
-  const { setNodeRef: setNestTargetRef, isOver: isNestTargetOver } = useDroppable({
+  const { setNodeRef: setNestTargetRef } = useDroppable({
     id: `nest::${task.id}`,
   })
 
@@ -190,22 +188,7 @@ export default function TaskItem({
           touch-none select-none
         "
       >
-        <div
-          ref={setNestTargetRef}
-          data-nest-target={task.id}
-          aria-label={`Drop a task here to make it a subtask of ${task.title}`}
-          className={`absolute left-1/4 right-14 top-1/4 bottom-1/4 z-10 rounded-md border-2 border-dashed pointer-events-none transition-colors ${
-            isNestTargetOver || nestingTargetId === task.id
-              ? 'border-honey bg-honey/15 dark:bg-honey/20'
-              : 'border-transparent'
-          }`}
-        >
-          {nestingTargetId === task.id && (
-            <span className="absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-honey px-2 py-1 text-xs font-medium text-white shadow">
-              Drop to add as subtask
-            </span>
-          )}
-        </div>
+        <span ref={setNestTargetRef} data-nest-target={task.id} aria-hidden="true" className="hidden" />
         {/* Fold caret (only when this task has children) */}
         {hasChildren ? (
           <button

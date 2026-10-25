@@ -102,7 +102,6 @@ export default function App() {
   const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null)
   const [unlabelRequest, setUnlabelRequest] = useState<{ taskId: number; busy: boolean } | null>(null)
   const createdPositionsRef = useRef(new Map<number, { parentId: number | null; position: number }>())
-  const [nestingTargetId, setNestingTargetId] = useState<number | null>(null)
   const expansionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const expansionTargetRef = useRef<number | null>(null)
   const reorderDropRef = useRef<ReorderDrop>(null)
@@ -480,7 +479,6 @@ export default function App() {
     if (expansionTimerRef.current) clearTimeout(expansionTimerRef.current)
     expansionTimerRef.current = null
     expansionTargetRef.current = null
-    setNestingTargetId(null)
     dragStartRectsRef.current.clear()
     lastCollisionIdRef.current = null
     reorderDropRef.current = null
@@ -495,7 +493,6 @@ export default function App() {
         if (expansionTimerRef.current) clearTimeout(expansionTimerRef.current)
         expansionTimerRef.current = null
         expansionTargetRef.current = nestId
-        setNestingTargetId(nestId)
         if (nestId !== null && collapsed.has(nestId)) {
           expansionTimerRef.current = setTimeout(() => {
             setCollapsed((previous) => {
@@ -546,7 +543,6 @@ export default function App() {
       if (expansionTimerRef.current) clearTimeout(expansionTimerRef.current)
       expansionTimerRef.current = null
       expansionTargetRef.current = null
-      setNestingTargetId(null)
       if (String(event.active.id) === 'task-composer') {
         reorderDropRef.current = null
         if (!effectiveOverId) return
@@ -851,7 +847,6 @@ export default function App() {
                 showCompleted={showCompleted}
                 isInDraggedSubtree={ancestorDragging && !isActive}
                 parentContext={node.parentContext}
-                nestingTargetId={nestingTargetId}
               />
               {!isCollapsed && node.children.length > 0 &&
                 renderNodes(node.children, node.id, subtreeIsDragging)}
