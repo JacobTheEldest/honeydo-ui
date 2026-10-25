@@ -161,7 +161,8 @@ export default function TaskItem({
       data-sortable-id={sortableId}
       style={{ ...dndStyle, paddingLeft: indentPx }}
       className={`
-        relative overflow-hidden
+        relative overflow-visible
+        ${menuOpen ? 'z-50' : ''}
         ${task.done && !showCompleted ? 'hidden' : ''}
       `}
     >
@@ -301,7 +302,7 @@ export default function TaskItem({
               <MoreHorizontal className="w-4 h-4" />
             </button>
             {menuOpen && (
-              <div data-composer-keep-open role="menu" className="absolute right-0 top-9 z-40 min-w-44 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg">
+              <div data-composer-keep-open role="menu" className="absolute right-0 top-9 z-50 min-w-44 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg">
                 <button
                   type="button"
                   role="menuitem"
