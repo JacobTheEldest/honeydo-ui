@@ -188,7 +188,7 @@ export default function TaskItem({
           touch-none select-none
         "
       >
-        <span ref={setNestTargetRef} data-nest-target={task.id} aria-hidden="true" className="hidden" />
+        <span ref={setNestTargetRef} data-nest-target={task.id} aria-hidden="true" className="absolute left-0 right-0 top-1/4 h-1/2 opacity-0" />
         {/* Fold caret (only when this task has children) */}
         {hasChildren ? (
           <button
