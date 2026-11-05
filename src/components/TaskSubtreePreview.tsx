@@ -4,19 +4,32 @@ import type { TaskTreeNode } from '../utils/taskTree.ts'
 interface TaskSubtreePreviewProps {
   node: TaskTreeNode
   collapsed: Set<number>
+  baseDepth?: number
+  placeholder?: boolean
+  placeholderTargetId?: number
 }
 
-/** A non-interactive visual copy used only inside DragOverlay. */
-export default function TaskSubtreePreview({ node, collapsed }: TaskSubtreePreviewProps) {
+/** Rendered either as the pointer-following overlay or as an in-list nest destination. */
+export default function TaskSubtreePreview({
+  node,
+  collapsed,
+  baseDepth = 0,
+  placeholder = false,
+  placeholderTargetId,
+}: TaskSubtreePreviewProps) {
   const renderNode = (current: TaskTreeNode, relativeDepth: number) => {
     const isCollapsed = collapsed.has(current.id)
     const hasChildren = current.children.length > 0
 
     return (
-      <div key={current.id} data-drag-preview-row={current.id}>
+      <div key={current.id} data-drag-preview-row={current.id} data-nest-preview-row={placeholder ? current.id : undefined}>
         <div
-          className="flex items-center gap-2 border-b border-gray-100 bg-white px-4 py-3 text-gray-800 last:border-b-0 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
-          style={{ paddingLeft: `${16 + relativeDepth * 16}px` }}
+          className={`flex items-center gap-2 border-b px-4 py-3 last:border-b-0 ${
+            placeholder
+              ? 'border-gray-200 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400'
+              : 'border-gray-100 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
+          }`}
+          style={{ paddingLeft: `${16 + (baseDepth + relativeDepth) * 16}px` }}
         >
           <span className="flex w-4 shrink-0 items-center justify-center text-gray-400 dark:text-gray-500" aria-hidden="true">
             {hasChildren ? (
@@ -34,9 +47,12 @@ export default function TaskSubtreePreview({ node, collapsed }: TaskSubtreePrevi
 
   return (
     <div
-      data-drag-preview
+      data-drag-preview={!placeholder || undefined}
+      data-nest-placeholder={placeholder ? placeholderTargetId : undefined}
       aria-hidden="true"
-      className="pointer-events-none w-full max-w-xl overflow-hidden rounded-lg bg-white opacity-90 shadow-xl ring-1 ring-black/10 dark:bg-gray-800 dark:ring-white/10"
+      className={placeholder
+        ? 'pointer-events-none w-full opacity-40'
+        : 'pointer-events-none w-full max-w-xl overflow-hidden rounded-lg bg-white opacity-90 shadow-xl ring-1 ring-black/10 dark:bg-gray-800 dark:ring-white/10'}
     >
       {renderNode(node, 0)}
     </div>

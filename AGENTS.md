@@ -1,47 +1,52 @@
 # Agent workflow
 
-For every feature, bug fix, or browser-interaction change, reproduce and verify locally before asking the user to deploy or test it. Treat the steps below as required; report concrete behavior and observations, not just that a build passed.
+Use this file as the single source of truth for HoneyDo development, testing, and deployment. Do not duplicate its step-by-step procedure in agent skills; skills should point here and retain only reusable tool-specific pitfalls.
 
-## Reproduce before changing code
+## Safe local test loop
 
-1. Record exact reproduction steps, browser/device, and input modality (mouse, keyboard, or touch), plus expected and actual behavior.
-2. Reproduce on the current baseline first. Note observable signals: DOM/UI state, relevant network/API calls and their count/status, and console errors. If it does not reproduce, record that rather than guessing.
-3. Inspect the relevant component, hook, API/proxy path, and recent changes. State one root-cause hypothesis and the evidence for it before patching; revise it if experiments disprove it.
-
-## Local verification loop (before deployment)
-
-1. Install dependencies and runtime: `mise install` and `npm ci`. Start the frontend **and** Express proxy with `mise run dev`. This serves Vite at `http://localhost:5173` and the proxy at port 3000; `npm run dev` alone starts only Vite, so `/api` and `/config.js` will not be proxied to Express.
-2. Open the local Vite URL in real Chromium using Browser Use or available browser automation. Inspect the rendered DOM, network/API requests, and console; exercise the changed behavior and a relevant unaffected control path.
-3. For pointer/touch/gesture behavior, use CDP touch emulation where needed. Exercise the actual originating target (including nested icons/handles), relevant movement thresholds, gesture release/cancel, and nearby controls. Assert side effects as well as UI state: for example, wrap `window.fetch` to count and inspect API calls, and verify both the intended action and a negative/control gesture. Do not infer the originating target from a gesture library's bound element without checking the real event target/composed path.
-4. When production bundling, runtime configuration, or serving differs materially from development, test the built app locally too: run `mise run build`, then `mise run start` (production server on port 3000; requires a configured proxy key), or use an appropriate local production server. `npm run preview` serves Vite's built frontend but does not reproduce the Express proxy by itself. Do not deploy to establish that a basic fix works.
-5. Never mutate live Vikunja data for routine verification. Prefer mocks/stubs or a safe test account/task, and confirm before any operation that could alter real data. Never place API keys or other secrets in browser code, source control, logs, screenshots, or test output. Keep credentials server-side and redact any incidental output.
-
-## Regression protection and checks
-
-- Add a focused automated regression test when feasible. There is currently no test runner or `test` script; choose the smallest suitable option and justify adding a larger framework. Do not claim `npm test` works unless a test script has actually been added.
-- If automation is impractical for a browser-only behavior, record reproducible browser steps and the captured observations (for example, gesture target and API-call count). Verify the pre-fix failure when possible, then the post-fix success.
-- Run the targeted test, if one exists, plus `npm run build` and `npm run lint`. Fix failures caused by the change; report any unrelated baseline failure explicitly.
-
-## Mandatory pre-push gate
-
-Before pushing any code change:
-
-- The relevant local regression test must pass, or the changed browser behavior must be reproduced and verified locally using the workflow above. A build alone is not a substitute.
-- `npm run build` and `npm run lint` must pass. If either has an unrelated baseline failure, document the exact failure and why it is unrelated; fix failures caused by the change.
-- If local verification is truly blocked, state the exact blocker and obtain explicit user approval before pushing unverified code. Never describe unverified code as verified.
-
-Keep these stages distinct: local regression/build/lint checks happen before the push; CI is checked after the push and does not replace local verification; deployment happens only after CI passes and only when requested or required by the task. A documentation-only change does not require deployment.
-
-Existing project commands:
+The ordinary test path must use only the mock Vikunja fixture. Do not run the Express proxy (`mise run dev`) for feature testing: it forwards to the configured Vikunja instance and may mutate real tasks.
 
 ```sh
-mise run dev       # Vite + Express proxy
-npm run build      # TypeScript check + Vite production bundle
-npm run lint       # oxlint
+npm ci
+npx playwright install chromium   # one-time per machine
+npm test                           # deterministic logic/regression tests
+npm run test:e2e                   # Chromium against mock fixture + Vite
+npm run build
+npm run lint
 ```
 
-## CI, deployment, and reporting
+`npm run test:e2e` starts the in-memory mock API on port 3001 and Vite on port 5173; Vite proxies `/api` and `/config.js` to the fixture. The test fixture resets between cases. It uses no API key and must never call the live Vikunja service. The mock records writes and exposes `/api/v1/test-state` for server-authoritative assertions. If a port is occupied, identify the owner and use an explicit alternate port/proxy target rather than killing an unknown process.
 
-- Do not ask the user to deploy or spend time testing a fix until local behavior has been verified and CI has passed. If local verification is blocked by missing credentials, network access, or browser tooling, state the exact blocker and do not claim the fix works; ask only for the input needed to unblock it.
-- Deploy only when deployment is part of the task and after CI is green. Production is managed by the parent Compose project `/srv/docker/docker-compose.yml`, which includes `./honeydo-ui/docker-compose.yml`; run Compose from `/srv/docker`, not from the leaf stack. Verify the running revision/image digest and that the served JavaScript asset contains the change. A healthy container alone is not proof, and deployment never substitutes for local regression testing.
-- Report the actual checks and interaction exercised, with observable results (such as expected UI state and request count/status), plus build/lint/CI outcomes. Do not report intent as evidence.
+Use `npm run dev` only for frontend-only work where API access is not needed. Use `mise run dev` only when deliberately testing the Express proxy against a safe, controlled API endpoint; it is not part of the normal regression loop.
+
+## Browser-interaction regression requirements
+
+For drag, touch, swipe, menu, or other browser behavior:
+
+1. Reproduce the current baseline before changing code. Record browser/device, input modality, actual gesture-start target, movement path, visible result, console errors, and API requests.
+2. Automate the interaction in Playwright whenever feasible. Use real mouse input (`page.mouse`) or Chromium CDP touch input (`Input.dispatchTouchEvent`) on the actual control; do not simulate React handlers or call dnd-kit internals.
+3. For drag-and-drop, assert all three layers: activation on the handle, correct target/collision through movement, and persisted server state plus rendered state after reload. Cover one-slot and multi-slot sibling moves, root-to-subtask and child-to-parent transitions, and relevant rejected/cancelled drops.
+4. Test competing gestures explicitly: dragging from the handle must not swipe/complete or trigger pull-to-refresh; ordinary swipe and pull-to-refresh from non-handle content must still work. Clear request logs after initial page loading so mount-time fetches are not confused with gesture side effects.
+5. Save traces/screenshots on failures. A selector check, build, healthy container, or visual animation alone does not prove persistence. For flicker, capture element bounds/transforms at several points along the real pointer path and verify the released item matches the visible/persisted slot.
+6. If a browser-only behavior cannot be automated, record exact manual steps and observable evidence. Do not push or deploy an unverified change because a test is difficult; report the blocker and ask for the missing input.
+
+## Checks and CI
+
+- `npm test` runs Node's built-in test runner for deterministic logic and API mutation plans.
+- `npm run test:e2e` runs Chromium interaction tests against the fixture.
+- `npm run build` runs TypeScript project checks, including tests, and the Vite production build.
+- `npm run lint` checks application, server, test, and build-config paths (not local worktrees or generated output).
+- CI must run unit tests, browser tests, lint, and build before publishing a Docker image. CI success does not replace local reproduction and verification.
+
+Add a focused regression test for each fixed defect. Prefer extracting deterministic ordering/tree/API planning logic from React rendering; keep true pointer/touch semantics in browser tests. Keep fixture behavior representative of Vikunja requests and verify request payloads and relation/order state, not just optimistic UI state.
+
+## Scope and safety
+
+- Never use live Vikunja data for routine tests. For any intentional live mutation, obtain explicit confirmation and use a designated safe task/account.
+- Never put API keys in browser code, source control, logs, screenshots, or test output. The Express proxy keeps credentials server-side.
+- Read the relevant component, hook, API path, and recent diff before changing behavior. State one evidence-based root-cause hypothesis; test it with the smallest change.
+- Keep unrelated cleanup/refactors separate from a bug fix. Do not stage `.worktrees/`; stage explicit paths.
+
+## Deployment gate
+
+Deploy only when explicitly requested and after the exact pushed commit's CI passes. Production is managed by the parent Compose project `/srv/docker/docker-compose.yml` (includes `./honeydo-ui/docker-compose.yml`); run Compose from `/srv/docker`, never from the leaf stack. After deployment, verify the running revision and image digest, the health endpoint on `127.0.0.1:3000`, and a distinctive string/hash in the served bundle. A healthy container alone is insufficient evidence.

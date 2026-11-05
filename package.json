@@ -6,8 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "oxlint",
+    "lint": "oxlint src server tests vite.config.ts playwright.config.ts",
     "test": "tsx --test tests/*.test.ts",
+    "test:e2e": "playwright test",
+    "build:server": "tsc -p tsconfig.server.json",
+    "test:e2e:prod": "HONEYDO_E2E_PRODUCTION=1 playwright test",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -21,6 +24,7 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/express": "^5.0.6",
     "@types/node": "^24.19.1",

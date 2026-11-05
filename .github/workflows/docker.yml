@@ -10,7 +10,44 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Browser interaction tests
+        run: npm run test:e2e
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Build Express proxy
+        run: npm run build:server
+
+      - name: Production-bundle browser tests
+        run: npm run test:e2e:prod
+
   build:
+    needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: read

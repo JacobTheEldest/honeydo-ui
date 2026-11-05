@@ -1,86 +1,70 @@
 # HoneyDo UI
 
-A simple, mobile-first web UI for managing Honey-Do tasks in [Vikunja](https://vikunja.io). Built for my wife to easily prioritize tasks without navigating the full Vikunja interface.
+A mobile-first React web app for organizing selected Vikunja tasks in a simple Honey-Do list. It keeps the Vikunja API key on the server and stores list ordering in task due dates; it does not use Vikunja's priority field for ordering.
 
 ## Features
 
-- **Title-only task list** - Clean, distraction-free view
-- **Drag-and-drop reordering** - Touch-friendly via `@dnd-kit`
-- **Tap to edit** - Quick inline title editing
-- **Swipe to complete** - Mobile gesture or click the check button
-- **Show/hide completed** - Toggle to review or un-complete tasks
-- **Create tasks** - FAB to add new tasks at the top of the list
-- **Open in Vikunja** - Deep link to full task details
+- Reorder tasks with drag and drop; move tasks into or out of subtasks.
+- Inline title editing, completion, and optional completed-task display.
+- Create root tasks or subtasks with a persistent inline composer.
+- Show subtasks in a nested tree, including descendants without their own Honey-Do label.
+- Remove a Honey-Do label and its ordering metadata for one task or a subtree.
+- Open a task in Vikunja for details; dark mode and mobile gestures.
 
-## Tech Stack
+## Stack
 
-- React 18 + TypeScript + Vite
-- Tailwind CSS
-- `@dnd-kit` for drag-and-drop
-- `@use-gesture/react` for swipe gestures
-- Express proxy (keeps API key server-side)
-- Docker + GitHub Actions + GHCR
+- React 19, TypeScript, and Vite
+- Tailwind CSS 4
+- `@dnd-kit` for drag-and-drop; `@use-gesture/react` for swipe and pull-to-refresh
+- Express proxy for keeping the Vikunja API key server-side
+- Docker image published to GHCR by GitHub Actions
 
 ## Development
 
-Requires [mise](https://mise.jdx.dev/) for dependency management.
+Node.js is managed with mise. Install dependencies with `npm ci` after `mise install`.
 
-```bash
-# Install dependencies
-mise install
-npm install
+### Safe tests (mock API only)
 
-# Copy env and add your Vikunja API key
-cp .env.example .env
-# Edit .env with VIKUNJA_API_KEY=...
-
-# Start dev server (frontend + proxy)
-mise run dev
+```sh
+npm test
+npx playwright install chromium  # once per machine
+npm run test:e2e
+npm run build
+npm run lint
+npm run build:server
+npm run test:e2e:prod
 ```
 
-The dev setup runs:
-- Vite dev server on `http://localhost:5173`
-- Express proxy on `http://localhost:3000`
+`npm run test:e2e` starts the mock Vikunja API and Vite automatically. It runs real Chromium mouse and touch input against fixture data, resets the fixture between cases, and makes no live Vikunja requests or writes. `npm run build:server && npm run test:e2e:prod` runs the same browser scenarios against the production bundle and Express proxy, still pointed only at the fixture. Drag regressions assert handle activation, overlay stability through the pointer path, absence of swipe/pull-refresh side effects, API relationship/order writes, and the rendered tree/order after reload. To inspect failures, run `npx playwright test --debug` or open a trace saved under `test-results/` with `npx playwright show-trace <trace.zip>`.
 
-The Vite dev config proxies `/api` to the Express server, so the frontend calls work seamlessly.
+### Run the app
+
+`mise run dev` starts Vite and the Express proxy. The proxy forwards API requests to the configured Vikunja instance and requires `VIKUNJA_API_KEY`; use it only when intentionally testing with an approved safe account/task. Routine feature tests should use the mock-only browser suite above.
+
+## Configuration
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `VIKUNJA_API_KEY` | — | Required by the Express proxy; remains server-side. |
+| `VIKUNJA_BASE_URL` | `https://vikunja.jacobsteward.me` | Vikunja instance URL. |
+| `HONEYDO_LABEL` | `Honey-Do` | Label that identifies tasks for the view. |
+| `DEFAULT_PROJECT_ID` | `1` | Project used for new root tasks. |
+| `PORT` | `3000` | Express proxy port. |
+
+See `.env.example` for the complete example configuration.
 
 ## Production
 
-```bash
-# Build
-mise run build
-
-# Start production server
+```sh
+npm run build
 mise run start
-
-# Or with Docker
-docker compose up -d
 ```
 
-## Environment Variables
+Docker Compose and deployment are managed by the parent Compose project on docker-host. See `AGENTS.md` for deployment verification requirements.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VIKUNJA_API_KEY` | - | **Required.** Bearer token for Vikunja API |
-| `VIKUNJA_BASE_URL` | `https://vikunja.jacobsteward.me` | Vikunja instance URL |
-| `PORT` | `3000` | Server port |
+## Ordering model
 
-## Deployment
-
-Images are built and pushed to GHCR via GitHub Actions on every push to `main`.
-
-```bash
-docker pull ghcr.io/jacobtheeldest/honeydo-ui:main
-```
-
-## Ordering Strategy
-
-Tasks are ordered by `due_date` (since Vikunja has no custom sort field):
-- Base date: `2000-01-01T00:00:00Z`
-- Position N = base + N × 60 seconds
-- New tasks get `base - 60s` (top of list)
-- Reordering uses midpoint insertion
-- Auto-rebalance when gaps get too small
+Sibling order is persisted through each task's `due_date`, not Vikunja's priority field. The application assigns dates around a fixed base and uses midpoint or sequential positions for insertions; it rebalances when spacing becomes too small. The UI renders each sibling group by persisted due-date order.
 
 ## License
 

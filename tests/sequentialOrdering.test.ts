@@ -16,7 +16,6 @@ function task(id: number, title: string, position: number, parentId?: number): V
     labels: parentId === undefined ? [{ id: 1, title: 'Honey-Do' }] : [],
     created: '',
     updated: '',
-    priority: 0,
     ...(parentId === undefined ? {} : { related_tasks: { parenttask: [{ id: parentId, title: 'Parent' }] } }),
   }
 }

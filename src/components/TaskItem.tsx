@@ -1,10 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, type SyntheticEvent } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useDrag } from '@use-gesture/react'
 import { ExternalLink, Check, GripVertical, ChevronRight, ChevronDown, MoreHorizontal, Plus, Tag } from 'lucide-react'
 import { VIKUNJA_BASE_URL } from '../config.ts'
+import { startedOnDragHandle } from '../utils/gestureOrigin.ts'
 import type { VikunjaTask } from '../types/vikunja.ts'
 
 interface TaskItemProps {
@@ -51,33 +52,44 @@ export default function TaskItem({
   const [swipeX, setSwipeX] = useState(0)
   const [isSwiping, setIsSwiping] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const swipeOriginOnHandleRef = useRef<boolean | null>(null)
+  const rememberSwipeOrigin = (event: SyntheticEvent<HTMLDivElement>) => {
+    swipeOriginOnHandleRef.current = startedOnDragHandle(event.nativeEvent)
+  }
 
   const {
     attributes,
     listeners,
     setNodeRef,
     transform,
-    transition,
     isDragging,
   } = useSortable({ id: sortableId })
   const { setNodeRef: setNestTargetRef } = useDroppable({
     id: `nest::${task.id}`,
   })
 
-  // DnD transition glitch fix: only animate the actively-dragged item. Other
-  // items snap to their new positions instead of "settling".
+  // The DragOverlay follows the pointer; keep the original row as a stationary
+  // source marker so sortable transforms cannot make it jump between slots.
   const dndStyle = {
-    transform: CSS.Transform.toString(transform),
-    transition: isDragging ? transition : undefined,
+    transform: isDragging ? undefined : CSS.Transform.toString(transform),
   }
 
   // Swipe gesture for mobile complete
   const bind = useDrag(
     (state) => {
-      const { offset, velocity, direction, last } = state
+      const { offset, velocity, direction, first, last } = state
       const [x] = offset
       const [vx] = velocity
       const [dx] = direction
+
+      if (first && swipeOriginOnHandleRef.current === null) {
+        swipeOriginOnHandleRef.current = startedOnDragHandle(state.event)
+      }
+      if (swipeOriginOnHandleRef.current === true) {
+        if (last) swipeOriginOnHandleRef.current = null
+        return
+      }
+      if (last) swipeOriginOnHandleRef.current = null
 
       if (last) {
         setIsSwiping(false)
@@ -178,6 +190,8 @@ export default function TaskItem({
       {/* Main row */}
       <div
         {...bind()}
+        onPointerDownCapture={rememberSwipeOrigin}
+        onTouchStartCapture={rememberSwipeOrigin}
         style={{
           transform: `translateX(${effectiveSwipeX}px)`,
           transition: isSwiping || isDragging ? 'none' : 'transform 0.2s ease-out',

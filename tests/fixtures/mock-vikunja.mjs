@@ -7,6 +7,7 @@ const date = (position) => new Date(Date.UTC(2000, 0, 1, 0, position)).toISOStri
 const tasks = new Map()
 const parents = new Map([[11, 1], [12, 1], [21, 2], [31, 30]])
 const requests = []
+let nextCreatedId = 100
 
 function addTask(id, title, project_id, position, labels = []) {
   tasks.set(id, {
@@ -24,14 +25,26 @@ function addTask(id, title, project_id, position, labels = []) {
   })
 }
 
-addTask(1, 'Root A', 1, 10, [HONEY_DO])
-addTask(2, 'Root B', 1, 20, [HONEY_DO])
-addTask(5, 'Root C', 1, 30, [HONEY_DO])
-addTask(11, 'Promotable child', 1, 40)
-addTask(12, 'Unlabeled-parent child', 1, 50)
-addTask(21, 'B descendant', 2, 60)
-addTask(30, 'Hidden unlabeled parent', 2, 70)
-addTask(31, 'Context child', 2, 80, [HONEY_DO])
+function resetFixture() {
+  tasks.clear()
+  parents.clear()
+  requests.length = 0
+  parents.set(11, 1)
+  parents.set(12, 1)
+  parents.set(21, 2)
+  parents.set(31, 30)
+  addTask(1, 'Root A', 1, 10, [HONEY_DO])
+  addTask(2, 'Root B', 1, 20, [HONEY_DO])
+  addTask(5, 'Root C', 1, 30, [HONEY_DO])
+  addTask(11, 'Promotable child', 1, 40)
+  addTask(12, 'Unlabeled-parent child', 1, 50)
+  addTask(21, 'B descendant', 2, 60)
+  addTask(30, 'Hidden unlabeled parent', 2, 70)
+  addTask(31, 'Context child', 2, 80, [HONEY_DO])
+  nextCreatedId = 100
+}
+
+resetFixture()
 
 function detail(task) {
   const children = [...parents.entries()]
@@ -103,7 +116,6 @@ app.delete('/api/v1/tasks/:id/labels/:labelId', (req, res) => {
 })
 // New-task composer support: task creation at a project, plus a deterministic
 // failure trigger ("force-error" title) for exercising the composer's error path.
-let nextCreatedId = 100
 app.put('/api/v1/projects/:id/tasks', (req, res) => {
   requests.push({ method: req.method, path: req.path, body: req.body })
   if (req.body?.title === 'force-error') {
@@ -125,6 +137,16 @@ app.put('/api/v1/projects/:id/tasks', (req, res) => {
   }
   tasks.set(id, task)
   res.json(task)
+})
+app.post('/api/v1/test-reset', (_req, res) => {
+  resetFixture()
+  res.status(204).end()
+})
+app.post('/api/v1/test-seed-long-list', (_req, res) => {
+  for (let index = 0; index < 20; index++) {
+    addTask(3000 + index, `Long-list root ${index + 1}`, 1, 100 + index, [HONEY_DO])
+  }
+  res.status(201).json({ count: 20 })
 })
 app.get('/api/v1/test-state', (_req, res) => {
   res.json({

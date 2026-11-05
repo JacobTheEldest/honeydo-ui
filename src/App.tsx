@@ -1,30 +1,19 @@
 import { useEffect, useState, useCallback, useMemo, useReducer, useRef, Fragment, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useDrag } from '@use-gesture/react'
 import {
   DndContext,
   DragOverlay,
   useDroppable,
-  closestCenter,
-  pointerWithin,
-  KeyboardSensor,
-  PointerSensor,
-  TouchSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
-  type DragOverEvent,
-  type CollisionDetection,
 } from '@dnd-kit/core'
 import {
   SortableContext,
-  sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown, Sun, Moon } from 'lucide-react'
 import { useVikunjaApi } from './hooks/useVikunjaApi.ts'
 import { useDarkMode } from './hooks/useDarkMode.ts'
+import { useTaskDragAndDrop, ROOT_DROP_ID } from './hooks/useTaskDragAndDrop.ts'
+import { usePullToRefresh } from './hooks/usePullToRefresh.ts'
 import TaskItem from './components/TaskItem.tsx'
 import TaskSubtreePreview from './components/TaskSubtreePreview.tsx'
 import TaskComposer from './components/TaskComposer.tsx'
@@ -34,27 +23,19 @@ import { composerReducer, initialComposerState } from './utils/composerState.ts'
 import {
   positionToDueDate,
   dueDateToPosition,
-  getMidpointPosition,
   getSequentialPosition,
-  needsRebalance,
-  rebalancePositions,
   getTopPosition,
 } from './utils/ordering.ts'
 import {
   buildTree,
   collectParentIds,
   encodeGroupItemId,
-  decodeGroupItemId,
   ROOT_PARENT,
   type TaskTreeNode,
   type ParentScope,
 } from './utils/taskTree.ts'
-import { canPromoteToRoot, isSelfOrDescendant } from './utils/hierarchyMutations.ts'
 import { countDescendants, planUnlabel, type UnlabelDecision } from './utils/unlabel.ts'
 import { HONEYDO_LABEL, DEFAULT_PROJECT_ID } from './config.ts'
-
-const ROOT_DROP_ID = 'root-promote'
-type ReorderDrop = { taskId: number; edge: 'before' | 'after' } | null
 
 function RootPromotionDropTarget({ visible }: { visible: boolean }) {
   const { setNodeRef, isOver } = useDroppable({ id: ROOT_DROP_ID })
@@ -98,18 +79,12 @@ export default function App() {
   const [showCompleted, setShowCompleted] = useState(false)
   const [honeyDoLabelId, setHoneyDoLabelId] = useState<number | null>(null)
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set())
-  const [activeTaskId, setActiveTaskId] = useState<number | null>(null)
   const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null)
   const [unlabelRequest, setUnlabelRequest] = useState<{ taskId: number; busy: boolean } | null>(null)
   const createdPositionsRef = useRef(new Map<number, { parentId: number | null; position: number }>())
-  const expansionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const expansionTargetRef = useRef<number | null>(null)
-  const reorderDropRef = useRef<ReorderDrop>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [composerState, composerDispatch] = useReducer(composerReducer, initialComposerState)
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const dragStartRectsRef = useRef<Map<string, DOMRectReadOnly>>(new Map())
-  const lastCollisionIdRef = useRef<string | null>(null)
 
   // Find or create Honey-Do label
   useEffect(() => {
@@ -135,19 +110,6 @@ export default function App() {
     return buildTree(tasks, HONEYDO_LABEL)
   }, [tasks])
 
-  const activeNode = useMemo<TaskTreeNode | null>(() => {
-    if (activeTaskId === null) return null
-    const find = (nodes: TaskTreeNode[]): TaskTreeNode | null => {
-      for (const node of nodes) {
-        if (node.id === activeTaskId) return node
-        const child = find(node.children)
-        if (child) return child
-      }
-      return null
-    }
-    return find(taskTree)
-  }, [activeTaskId, taskTree])
-
   // Hidden ancestor ids: any node whose ancestor is `done && !showCompleted`
   // (i.e. the show-done toggle is off and an ancestor was marked done).
   // We use this to mirror the existing "hide done task" behavior across the
@@ -169,95 +131,6 @@ export default function App() {
     for (const t of tasks) m.set(t.id, t)
     return m
   }, [tasks])
-
-  // Sibling-group lookup keyed by (parentScope, orderedTaskIds) — the groups
-  // we render as SortableContexts. Root group is keyed by ROOT_PARENT.
-  const groups = useMemo<Array<{ parent: ParentScope; items: number[] }>>(() => {
-    const list: Array<{ parent: ParentScope; items: number[] }> = []
-    const visit = (node: TaskTreeNode): void => {
-      // The list of children of `node` is the group at scope `node.id`.
-      // We always emit a group, even when empty, so DndContext can find it.
-      if (node.children.length > 0) {
-        list.push({
-          parent: node.id,
-          items: node.children.map((c) => c.id),
-        })
-      }
-      for (const c of node.children) visit(c)
-    }
-    list.push({
-      parent: ROOT_PARENT,
-      items: taskTree.map((r) => r.id),
-    })
-    for (const r of taskTree) visit(r)
-    return list
-  }, [taskTree])
-
-  // Reverse lookup: given a sortable id, return the group it belongs to.
-  const groupBySortableId = useMemo<Map<string, { parent: ParentScope; items: number[] }>>(() => {
-    const m = new Map<string, { parent: ParentScope; items: number[] }>()
-    for (const g of groups) {
-      for (const id of g.items) {
-        m.set(encodeGroupItemId(g.parent, id), g)
-      }
-    }
-    return m
-  }, [groups])
-
-  const siblingGroupCollisionDetection = useCallback<CollisionDetection>((args) => {
-    const remember = (collisions: ReturnType<typeof pointerWithin>) => {
-      lastCollisionIdRef.current = collisions[0] ? String(collisions[0].id) : null
-      return collisions
-    }
-
-    if (String(args.active.id) === 'task-composer') {
-      return remember(pointerWithin(args))
-    }
-
-    const specialHits = pointerWithin(args)
-    const rootHits = specialHits.filter((collision) => String(collision.id) === ROOT_DROP_ID)
-    if (rootHits.length > 0) return remember(rootHits)
-
-    const active = decodeGroupItemId(String(args.active.id))
-    const nestHits = specialHits.filter((collision) => {
-      const id = String(collision.id)
-      if (!id.startsWith('nest::')) return false
-      const targetId = Number(id.slice('nest::'.length))
-      return Number.isFinite(targetId)
-    })
-    if (nestHits.length > 0) return remember(nestHits)
-
-    if (!active) return remember(closestCenter(args))
-
-    const isSameScope = (id: string | number) => {
-      const decoded = decodeGroupItemId(String(id))
-      return decoded?.parent === active.parent
-    }
-
-    // Use drag-start geometry first. Sortable transforms can move rows from
-    // other nested groups under the pointer during a drag; their original
-    // location still identifies an attempted cross-scope drop correctly.
-    const initialContainers = args.droppableContainers.map((container) => {
-      const rect = dragStartRectsRef.current.get(String(container.id))
-      return rect ? { ...container, rect: { current: rect } } : container
-    })
-    const initialHits = pointerWithin({ ...args, droppableContainers: initialContainers })
-    const sameInitialHits = initialHits.filter((collision) => isSameScope(collision.id))
-    if (sameInitialHits.length > 0) return remember(sameInitialHits)
-    if (initialHits.length > 0) return remember(initialHits)
-
-    const currentHits = pointerWithin(args)
-    const sameCurrentHits = currentHits.filter((collision) => isSameScope(collision.id))
-    if (sameCurrentHits.length > 0) return remember(sameCurrentHits)
-    if (currentHits.length > 0) return remember(currentHits)
-
-    const sameScopeContainers = args.droppableContainers.filter((container) =>
-      isSameScope(container.id)
-    )
-    return remember(sameScopeContainers.length > 0
-      ? closestCenter({ ...args, droppableContainers: sameScopeContainers })
-      : [])
-  }, [])
 
   // Stable handlers
   const notify = useCallback((message: string) => {
@@ -458,336 +331,19 @@ export default function App() {
     [byId, taskTree, createTask, createSubtask, honeyDoLabelId, addLabelToTask, fetchTasks]
   )
 
-  const handleDragStart = useCallback((event: DragStartEvent) => {
-    if (String(event.active.id) === 'task-composer') {
-      reorderDropRef.current = null
-      return
-    }
-    const decoded = decodeGroupItemId(String(event.active.id))
-    const rects = new Map<string, DOMRectReadOnly>()
-    document.querySelectorAll<HTMLElement>('[data-sortable-id]').forEach((element) => {
-      const id = element.dataset.sortableId
-      if (id) rects.set(id, element.getBoundingClientRect())
-    })
-    dragStartRectsRef.current = rects
-    lastCollisionIdRef.current = null
-    reorderDropRef.current = null
-    setActiveTaskId(decoded?.taskId ?? null)
-  }, [])
+  const dragAndDrop = useTaskDragAndDrop({
+    tasks,
+    taskTree,
+    collapsed,
+    setCollapsed,
+    composerDispatch,
+    honeyDoLabelId,
+    persistTaskOrdering,
+    changeTaskParent,
+    notify,
+  })
 
-  const handleDragCancel = useCallback(() => {
-    if (expansionTimerRef.current) clearTimeout(expansionTimerRef.current)
-    expansionTimerRef.current = null
-    expansionTargetRef.current = null
-    dragStartRectsRef.current.clear()
-    lastCollisionIdRef.current = null
-    reorderDropRef.current = null
-    setActiveTaskId(null)
-  }, [])
-
-  const handleDragOver = useCallback(
-    (event: DragOverEvent) => {
-      const overId = event.over ? String(event.over.id) : ''
-      const nestId = overId.startsWith('nest::') ? Number(overId.slice('nest::'.length)) : null
-      if (nestId !== expansionTargetRef.current) {
-        if (expansionTimerRef.current) clearTimeout(expansionTimerRef.current)
-        expansionTimerRef.current = null
-        expansionTargetRef.current = nestId
-        if (nestId !== null && collapsed.has(nestId)) {
-          expansionTimerRef.current = setTimeout(() => {
-            setCollapsed((previous) => {
-              const next = new Set(previous)
-              next.delete(nestId)
-              return next
-            })
-            expansionTimerRef.current = null
-          }, 600)
-        }
-      }
-      const isComposerDrag = String(event.active.id) === 'task-composer'
-      if (!event.over || !overId || overId === ROOT_DROP_ID || overId.startsWith('nest::')) {
-        reorderDropRef.current = null
-        return
-      }
-      const overTarget = event.over
-      const active = isComposerDrag ? null : decodeGroupItemId(String(event.active.id))
-      const over = decodeGroupItemId(overId)
-      if (!over || (!isComposerDrag && (!active || active.parent !== over.parent || active.taskId === over.taskId))) {
-        reorderDropRef.current = null
-        return
-      }
-
-      const source = event.activatorEvent as Event & {
-        clientY?: number
-        touches?: TouchList
-        changedTouches?: TouchList
-      }
-      const startY = source.touches?.[0]?.clientY ?? source.changedTouches?.[0]?.clientY ?? source.clientY
-      const translatedRect = event.active.rect.current.translated
-      const pointerY = startY === undefined
-        ? (translatedRect ? translatedRect.top + translatedRect.height / 2 : overTarget.rect.top + overTarget.rect.height / 2)
-        : startY + event.delta.y
-      const nextDrop = {
-        taskId: over.taskId,
-        edge: pointerY < overTarget.rect.top + overTarget.rect.height / 2 ? 'before' as const : 'after' as const,
-      }
-      reorderDropRef.current = nextDrop
-    },
-    [collapsed]
-  )
-
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const effectiveOverId = lastCollisionIdRef.current ?? (event.over ? String(event.over.id) : null)
-      const currentReorderDrop = reorderDropRef.current
-      if (expansionTimerRef.current) clearTimeout(expansionTimerRef.current)
-      expansionTimerRef.current = null
-      expansionTargetRef.current = null
-      if (String(event.active.id) === 'task-composer') {
-        reorderDropRef.current = null
-        if (!effectiveOverId) return
-        if (effectiveOverId.startsWith('nest::')) {
-          const parentId = Number(effectiveOverId.slice('nest::'.length))
-          if (!Number.isFinite(parentId) || !byId.has(parentId)) return
-          setCollapsed((previous) => {
-            const next = new Set(previous)
-            next.delete(parentId)
-            return next
-          })
-          composerDispatch({ type: 'move', placement: { parentId, beforeTaskId: null, afterTaskId: null } })
-          return
-        }
-        const target = decodeGroupItemId(effectiveOverId)
-        if (!target) return
-        const group = groupBySortableId.get(effectiveOverId)
-        const targetIndex = group?.items.indexOf(target.taskId) ?? -1
-        const overTarget = event.over
-        const after = currentReorderDrop?.edge === 'after' && currentReorderDrop?.taskId === target.taskId
-          ? true
-          : currentReorderDrop?.taskId === target.taskId
-            ? currentReorderDrop.edge === 'after'
-            : (() => {
-                const translatedRect = event.active.rect.current.translated
-                const pointerY = translatedRect
-                  ? translatedRect.top + translatedRect.height / 2
-                  : overTarget
-                    ? overTarget.rect.top + overTarget.rect.height / 2
-                    : 0
-                return Boolean(overTarget && pointerY >= overTarget.rect.top + overTarget.rect.height / 2)
-              })()
-        const beforeTaskId = after ? (group?.items[targetIndex + 1] ?? null) : target.taskId
-        const afterTaskId = after ? target.taskId : (group?.items[targetIndex - 1] ?? null)
-        composerDispatch({ type: 'move', placement: { parentId: target.parent === ROOT_PARENT ? null : target.parent, beforeTaskId, afterTaskId } })
-        return
-      }
-      dragStartRectsRef.current.clear()
-      lastCollisionIdRef.current = null
-      reorderDropRef.current = null
-      setActiveTaskId(null)
-
-      const activeDecoded = decodeGroupItemId(String(event.active.id))
-      if (!activeDecoded || !effectiveOverId) return
-      const task = byId.get(activeDecoded.taskId)
-      if (!task) return
-
-      if (effectiveOverId === ROOT_DROP_ID) {
-        const oldParentIds = task.related_tasks?.parenttask?.map((parentTask) => parentTask.id) ?? []
-        const oldParentId = oldParentIds[0] ?? null
-        if (oldParentId === null) return
-        const parent = byId.get(oldParentId)
-        if (oldParentIds.length !== 1 || !canPromoteToRoot(task, parent, HONEYDO_LABEL)) {
-          notify('This task can only be promoted when its direct parent is a Honey-Do task.')
-          return
-        }
-        if (honeyDoLabelId === null) {
-          notify('The Honey-Do label is unavailable. Refresh the task list and try again.')
-          return
-        }
-        const rootPositions = taskTree.map((root) => dueDateToPosition(root.due_date)).filter(Number.isFinite)
-        const topPosition = Math.min(getTopPosition(), ...rootPositions) - 1
-        const labelIdToAdd = task.labels?.some((label) => label.id === honeyDoLabelId)
-          ? undefined
-          : honeyDoLabelId
-        changeTaskParent({
-          taskId: task.id,
-          oldParentId,
-          oldParentIds: task.related_tasks?.parenttask?.map((parentTask) => parentTask.id) ?? [],
-          newParentId: null,
-          oldDueDate: task.due_date,
-          newDueDate: positionToDueDate(topPosition),
-          labelIdToAdd,
-        }).catch((error: unknown) => {
-          notify(error instanceof Error ? error.message : 'Could not promote this task. Try again.')
-        })
-        return
-      }
-
-      if (effectiveOverId.startsWith('nest::')) {
-        const targetId = Number(effectiveOverId.slice('nest::'.length))
-        if (!Number.isFinite(targetId)) return
-        const findNode = (nodes: TaskTreeNode[], id: number): TaskTreeNode | null => {
-          for (const node of nodes) {
-            if (node.id === id) return node
-            const child = findNode(node.children, id)
-            if (child) return child
-          }
-          return null
-        }
-        const activeNode = findNode(taskTree, task.id)
-        const actualTargetNode = findNode(taskTree, targetId)
-        if (activeNode && isSelfOrDescendant(activeNode, targetId)) {
-          notify('A task cannot be moved under itself or one of its subtasks.')
-          return
-        }
-        if (!byId.has(targetId) || !actualTargetNode) return
-
-        const oldParentId = task.related_tasks?.parenttask?.[0]?.id ?? null
-        if (oldParentId === targetId) return
-        const siblingPositions = actualTargetNode.children
-          .map((child) => dueDateToPosition(child.due_date))
-          .filter(Number.isFinite)
-        const newPosition = (siblingPositions.length > 0 ? Math.max(...siblingPositions) : 0) + 1
-        changeTaskParent({
-          taskId: task.id,
-          oldParentId,
-          oldParentIds: task.related_tasks?.parenttask?.map((parentTask) => parentTask.id) ?? [],
-          newParentId: targetId,
-          oldDueDate: task.due_date,
-          newDueDate: positionToDueDate(newPosition),
-        }).then(() => {
-          setCollapsed((previous) => {
-            const next = new Set(previous)
-            next.delete(targetId)
-            return next
-          })
-        }).catch((error: unknown) => {
-          notify(error instanceof Error ? error.message : 'Could not move this task. Check permissions and try again.')
-        })
-        return
-      }
-
-      const overDecoded = decodeGroupItemId(effectiveOverId)
-      if (!overDecoded || activeDecoded.parent !== overDecoded.parent) return
-
-      const group = groupBySortableId.get(String(event.active.id))
-      if (!group) return
-
-      const oldIndex = group.items.indexOf(activeDecoded.taskId)
-      const overIndex = group.items.indexOf(overDecoded.taskId)
-      if (oldIndex === -1 || overIndex === -1 || oldIndex === overIndex) return
-      const reorderedIds = Array.from(group.items)
-      const [moved] = reorderedIds.splice(oldIndex, 1)
-      reorderedIds.splice(overIndex, 0, moved)
-      const newIndex = reorderedIds.indexOf(activeDecoded.taskId)
-      const groupTasks: import('./types/vikunja.ts').VikunjaTask[] = []
-      for (const id of reorderedIds) {
-        const sibling = byId.get(id)
-        if (sibling) groupTasks.push(sibling)
-      }
-
-      const positions = groupTasks.map((sibling) => dueDateToPosition(sibling.due_date))
-      const updates: Array<{ task: import('./types/vikunja.ts').VikunjaTask; due_date: string }> = []
-
-      if (needsRebalance(positions)) {
-        const fresh = rebalancePositions(groupTasks.length)
-        for (let i = 0; i < groupTasks.length; i++) {
-          updates.push({ task: groupTasks[i], due_date: positionToDueDate(fresh[i]) })
-        }
-      } else {
-        const moved = groupTasks[newIndex]
-        let newPos: number
-        if (newIndex === 0) {
-          newPos = group.parent === ROOT_PARENT
-            ? getTopPosition()
-            : dueDateToPosition(groupTasks[1]?.due_date ?? null) - 1
-        } else if (newIndex === groupTasks.length - 1) {
-          const prevPos = dueDateToPosition(groupTasks[newIndex - 1].due_date)
-          newPos = prevPos + 1
-        } else {
-          const prevPos = dueDateToPosition(groupTasks[newIndex - 1].due_date)
-          const nextPos = dueDateToPosition(groupTasks[newIndex + 1].due_date)
-          newPos = getMidpointPosition(prevPos, nextPos)
-        }
-        updates.push({ task: moved, due_date: positionToDueDate(newPos) })
-      }
-
-      persistTaskOrdering(updates).catch((error: unknown) => {
-        notify(error instanceof Error ? error.message : 'Could not save this order. Refresh and try again.')
-      })
-    },
-    [byId, groupBySortableId, persistTaskOrdering, taskTree, changeTaskParent, honeyDoLabelId, notify]
-  )
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, {
-      activationConstraint: { delay: 200, tolerance: 5 },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  )
-
-  // Pull-to-refresh on mobile
-  const mainRef = useRef<HTMLElement>(null)
-  const [pullDistance, setPullDistance] = useState(0)
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const pullThreshold = 72
-  const pullStartedOnDragHandle = useRef(false)
-
-  const bindPull = useDrag(
-    (state) => {
-      const { offset, last, first } = state
-      const [, dy] = offset
-
-      if (first) {
-        // state.target is the element bound to the gesture, not necessarily
-        // the original touch target. Inspect the event target and composed
-        // path so touches that begin on the handle's child SVG are excluded.
-        const event = state.event
-        const eventTarget = event.target
-        const startedOnHandle =
-          (eventTarget instanceof Element && eventTarget.closest('[data-drag-handle]') !== null) ||
-          (typeof event.composedPath === 'function' &&
-            event.composedPath().some(
-              (target) => target instanceof Element && target.closest('[data-drag-handle]') !== null
-            ))
-        pullStartedOnDragHandle.current = startedOnHandle
-
-        // Only enable pull-to-refresh when scrolled to top.
-        const el = mainRef.current
-        if (!pullStartedOnDragHandle.current && el && el.scrollTop > 0) return
-      }
-
-      // Keep the entire gesture out of pull-to-refresh after a handle start;
-      // dnd-kit remains responsible for the same touch sequence.
-      if (pullStartedOnDragHandle.current) {
-        if (last) pullStartedOnDragHandle.current = false
-        return
-      }
-
-      if (last) {
-        if (dy >= pullThreshold && !isRefreshing) {
-          setIsRefreshing(true)
-          fetchTasks().catch(() => {}).finally(() => {
-            setIsRefreshing(false)
-          })
-        }
-        setPullDistance(0)
-      } else {
-        // Dampen the pull: move at 1/3 speed, only downward
-        const dampened = Math.max(0, dy / 3)
-        setPullDistance(dampened)
-      }
-    },
-    {
-      axis: 'y',
-      from: () => [0, pullDistance],
-      filterTaps: true,
-      preventScroll: true,
-      pointer: { touch: true },
-    }
-  )
+  const { mainRef, pullDistance, isRefreshing, bindPull, rememberPullOrigin } = usePullToRefresh(fetchTasks)
 
   const allCollapsed = collapsed.size > 0
 
@@ -818,7 +374,7 @@ export default function App() {
         )}
         {visible.map((node, index) => {
           const isCollapsed = collapsed.has(node.id)
-          const isActive = activeTaskId === node.id
+          const isActive = dragAndDrop.activeTaskId === node.id
           const subtreeIsDragging = ancestorDragging || isActive
           return (
             <Fragment key={`${parentScope}:${node.id}`}>
@@ -845,6 +401,15 @@ export default function App() {
               />
               {!isCollapsed && node.children.length > 0 &&
                 renderNodes(node.children, node.id, subtreeIsDragging)}
+              {dragAndDrop.nestPreviewTargetId === node.id && dragAndDrop.activeNode && (
+                <TaskSubtreePreview
+                  node={dragAndDrop.activeNode}
+                  collapsed={collapsed}
+                  baseDepth={node.depth + 1}
+                  placeholder
+                  placeholderTargetId={node.id}
+                />
+              )}
             </Fragment>
           )
         })}
@@ -904,18 +469,20 @@ export default function App() {
 
       {/* Task list */}
       <DndContext
-        sensors={sensors}
-        collisionDetection={siblingGroupCollisionDetection}
-        onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDragCancel={handleDragCancel}
-        onDragEnd={handleDragEnd}
+        sensors={dragAndDrop.sensors}
+        collisionDetection={dragAndDrop.collisionDetection}
+        onDragStart={dragAndDrop.onDragStart}
+        onDragOver={dragAndDrop.onDragOver}
+        onDragCancel={dragAndDrop.onDragCancel}
+        onDragEnd={dragAndDrop.onDragEnd}
       >
         <main
         ref={mainRef}
         className="max-w-xl mx-auto pb-24 overscroll-none"
         style={{ transform: `translateY(${pullDistance}px)` }}
         {...bindPull()}
+        onPointerDownCapture={rememberPullOrigin}
+        onTouchStartCapture={rememberPullOrigin}
       >
         <div
           className="flex justify-center transition-all duration-200"
@@ -955,11 +522,11 @@ export default function App() {
           </div>
         )}
 
-        <RootPromotionDropTarget visible={activeTaskId !== null} />
+        <RootPromotionDropTarget visible={dragAndDrop.activeTaskId !== null} />
         {renderNodes(taskTree, ROOT_PARENT)}
       </main>
       <DragOverlay dropAnimation={null}>
-        {activeNode ? <TaskSubtreePreview node={activeNode} collapsed={collapsed} /> : null}
+        {dragAndDrop.activeNode ? <TaskSubtreePreview node={dragAndDrop.activeNode} collapsed={collapsed} /> : null}
       </DragOverlay>
       </DndContext>
 
