@@ -397,6 +397,7 @@ export default function App() {
                 onMenuOpenChange={handleMenuOpenChange}
                 showCompleted={showCompleted}
                 isInDraggedSubtree={ancestorDragging && !isActive}
+                hideDraggedSource={dragAndDrop.nestPreviewTargetId !== null && (isActive || ancestorDragging)}
                 parentContext={node.parentContext}
               />
               {!isCollapsed && node.children.length > 0 &&

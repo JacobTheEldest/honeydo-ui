@@ -16,8 +16,8 @@ async function dragHandleTo(
   const initialPointer = { x: start.x + 12, y: start.y + 3 }
   await page.mouse.move(start.x, start.y)
   await page.mouse.down()
-  // Cross the PointerSensor activation distance, then verify the real overlay
-  // follows the pointer and the source row remains dimmed at its origin.
+  // Follow the actual overlay during movement. The origin row is dimmed until
+  // a nest destination is active, when the target placeholder takes over.
   await page.mouse.move(initialPointer.x, initialPointer.y, { steps: 3 })
   await page.waitForTimeout(100)
   if (activeTask) {
@@ -44,19 +44,27 @@ async function dragHandleTo(
       const drift = Math.abs(actualCenterY - expectedCenterY)
       expect(drift, `drag preview drifted at step ${step}: actualY=${actualCenterY}, expectedY=${expectedCenterY}, pointerY=${pointerY}`)
         .toBeLessThan(20)
-      await expect(activeRow).toHaveCSS('opacity', '0.5')
+      const hasNestDestination = await page.locator('[data-nest-placeholder]').count() > 0
+      await expect(activeRow).toHaveCSS('opacity', hasNestDestination ? '0' : '0.5')
     }
   } else {
     await page.mouse.move(target.x, target.y, { steps: 12 })
   }
   await page.waitForTimeout(100)
   if (nestTargetId !== undefined && activeTask) {
-    const activeId = await activeTask.getAttribute('data-task-id')
     const placeholder = page.locator(`[data-nest-placeholder="${nestTargetId}"]`)
     await expect(placeholder).toBeVisible()
+    const activeId = await activeTask.getAttribute('data-task-id')
+    const targetBox = await page.locator(`[data-task-id="${nestTargetId}"]`).boundingBox()
+    const placeholderBox = await placeholder.boundingBox()
+    expect(targetBox, 'target parent should be measurable').not.toBeNull()
+    expect(placeholderBox, 'nested preview should be measurable').not.toBeNull()
+    if (!targetBox || !placeholderBox) throw new Error('target or nesting preview has no bounding box')
+    expect(placeholderBox.y).toBeGreaterThanOrEqual(targetBox.y + targetBox.height - 1)
     const placeholderRow = placeholder.locator(`[data-nest-preview-row="${activeId}"]`).first().locator('div').first()
     await expect(placeholderRow).toHaveCSS('padding-left', '32px')
     await expect(placeholder).toHaveCSS('opacity', '0.4')
+    await expect(activeTask.locator(':scope > div').nth(1)).toHaveCSS('opacity', '0')
   }
   await page.mouse.up()
 }
@@ -194,13 +202,19 @@ test('touch-dragging a handle does not swipe or pull-to-refresh and can nest the
       const expectedCenterY = y + previewCenterOffset
       expect(Math.abs(previewBox.y + previewBox.height / 2 - expectedCenterY), `touch preview drifted at step ${step}`)
         .toBeLessThan(20)
-      await expect(activeRow).toHaveCSS('opacity', '0.5')
+      const hasNestDestination = await page.locator('[data-nest-placeholder]').count() > 0
+      await expect(activeRow).toHaveCSS('opacity', hasNestDestination ? '0' : '0.5')
     }
 
     const nestingPlaceholder = page.locator('[data-nest-placeholder="1"]')
     await expect(nestingPlaceholder).toBeVisible()
+    const placeholderBox = await nestingPlaceholder.boundingBox()
+    expect(placeholderBox, 'touch nesting preview should be measurable').not.toBeNull()
+    if (!placeholderBox) throw new Error('touch nesting preview has no bounding box')
+    expect(placeholderBox.y).toBeGreaterThanOrEqual(targetBox.y + targetBox.height - 1)
     await expect(nestingPlaceholder.locator('[data-nest-preview-row="2"]').first().locator('div').first()).toHaveCSS('padding-left', '32px')
     await expect(nestingPlaceholder).toHaveCSS('opacity', '0.4')
+    await expect(activeRow).toHaveCSS('opacity', '0')
     expect(observedRequests.some((entry) => entry.includes('/api/v1/projects')))
       .toBe(false)
     await expect(activeRow).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')

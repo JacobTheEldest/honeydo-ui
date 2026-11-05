@@ -26,6 +26,7 @@ interface TaskItemProps {
   onMenuOpenChange: (taskId: number, open: boolean) => void
   showCompleted: boolean
   isInDraggedSubtree: boolean
+  hideDraggedSource: boolean
   parentContext?: string
 }
 
@@ -45,6 +46,7 @@ export default function TaskItem({
   onMenuOpenChange,
   showCompleted,
   isInDraggedSubtree,
+  hideDraggedSource,
   parentContext,
 }: TaskItemProps) {
   const [editing, setEditing] = useState(false)
@@ -195,7 +197,7 @@ export default function TaskItem({
         style={{
           transform: `translateX(${effectiveSwipeX}px)`,
           transition: isSwiping || isDragging ? 'none' : 'transform 0.2s ease-out',
-          opacity: isDragging ? 0.5 : isInDraggedSubtree ? 0.3 : 1,
+          opacity: hideDraggedSource ? 0 : isDragging ? 0.5 : isInDraggedSubtree ? 0.3 : 1,
         }}
         className="
           relative flex items-center gap-2 px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700
