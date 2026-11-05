@@ -33,7 +33,7 @@ import {
   type ParentScope,
   type TaskTreeNode,
 } from '../utils/taskTree.ts'
-import { canPromoteToRoot, isSelfOrDescendant } from '../utils/hierarchyMutations.ts'
+import { canNestUnder, canPromoteToRoot, isSelfOrDescendant } from '../utils/hierarchyMutations.ts'
 
 export const ROOT_DROP_ID = 'root-promote'
 
@@ -73,6 +73,7 @@ export function useTaskDragAndDrop({
   notify,
 }: UseTaskDragAndDropOptions) {
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null)
+  const [isComposerDragging, setIsComposerDragging] = useState(false)
   const [nestPreviewTargetId, setNestPreviewTargetId] = useState<number | null>(null)
   const dragStartRectsRef = useRef<Map<string, DOMRectReadOnly>>(new Map())
   const lastCollisionIdRef = useRef<string | null>(null)
@@ -104,6 +105,13 @@ export function useTaskDragAndDrop({
   }, [groups])
 
   const activeNode = useMemo(() => activeTaskId === null ? null : findNode(taskTree, activeTaskId), [activeTaskId, taskTree])
+  const activeParentIds = activeNode?.related_tasks?.parenttask?.map((parent) => parent.id) ?? []
+  const activeParent = activeParentIds.length === 1 ? byId.get(activeParentIds[0]) : undefined
+  const canPromoteActiveTaskToRoot = Boolean(
+    activeNode &&
+    honeyDoLabelId !== null &&
+    canPromoteToRoot(activeNode, activeParent, HONEYDO_LABEL)
+  )
 
   const collisionDetection = useCallback<CollisionDetection>((args) => {
     const remember = (collisions: ReturnType<typeof pointerWithin>) => {
@@ -150,7 +158,9 @@ export function useTaskDragAndDrop({
     lastCollisionIdRef.current = null
     reorderDropRef.current = null
     setNestPreviewTargetId(null)
-    if (String(event.active.id) === 'task-composer') return
+    const isComposerDrag = String(event.active.id) === 'task-composer'
+    setIsComposerDragging(isComposerDrag)
+    if (isComposerDrag) return
 
     document.querySelectorAll<HTMLElement>('[data-sortable-id], [data-nest-target]').forEach((element) => {
       const id = element.dataset.sortableId ?? (element.dataset.nestTarget ? `nest::${element.dataset.nestTarget}` : null)
@@ -168,26 +178,26 @@ export function useTaskDragAndDrop({
     lastCollisionIdRef.current = null
     reorderDropRef.current = null
     setNestPreviewTargetId(null)
+    setIsComposerDragging(false)
     setActiveTaskId(null)
   }, [])
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     const overId = event.over ? String(event.over.id) : ''
     const nestId = overId.startsWith('nest::') ? Number(overId.slice('nest::'.length)) : null
-    const dragged = String(event.active.id) === 'task-composer'
-      ? null
-      : decodeGroupItemId(String(event.active.id))
+    const isComposerDrag = String(event.active.id) === 'task-composer'
+    const dragged = isComposerDrag ? null : decodeGroupItemId(String(event.active.id))
     const activeNode = dragged ? findNode(taskTree, dragged.taskId) : null
     const targetNode = nestId === null ? null : findNode(taskTree, nestId)
-    const sameParent = activeNode?.related_tasks?.parenttask?.[0]?.id === nestId
     const validNestTarget =
       nestId !== null &&
       Number.isFinite(nestId) &&
       activeNode !== null &&
       targetNode !== null &&
-      !sameParent &&
-      !isSelfOrDescendant(activeNode, nestId)
-    const nextPreviewTarget = validNestTarget ? nestId : null
+      canNestUnder(activeNode, nestId)
+    const nextPreviewTarget = isComposerDrag
+      ? (nestId !== null && targetNode ? nestId : null)
+      : validNestTarget ? nestId : null
     setNestPreviewTargetId((current) => current === nextPreviewTarget ? current : nextPreviewTarget)
 
     if (nestId !== expansionTargetRef.current) {
@@ -206,7 +216,6 @@ export function useTaskDragAndDrop({
       }
     }
 
-    const isComposerDrag = String(event.active.id) === 'task-composer'
     if (!event.over || !overId || overId === ROOT_DROP_ID || overId.startsWith('nest::')) {
       reorderDropRef.current = null
       return
@@ -245,6 +254,7 @@ export function useTaskDragAndDrop({
     lastCollisionIdRef.current = null
     reorderDropRef.current = null
     setNestPreviewTargetId(null)
+    setIsComposerDragging(false)
 
     if (activeId === 'task-composer') {
       if (!effectiveOverId) return
@@ -406,6 +416,8 @@ export function useTaskDragAndDrop({
   return {
     activeTaskId,
     activeNode,
+    isComposerDragging,
+    canPromoteActiveTaskToRoot,
     nestPreviewTargetId,
     sensors,
     collisionDetection,

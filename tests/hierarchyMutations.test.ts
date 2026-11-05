@@ -3,6 +3,7 @@ import test from 'node:test'
 import type { ParentChangeApi } from '../src/utils/hierarchyMutations.ts'
 import {
   applyParentChange,
+  canNestUnder,
   canPromoteToRoot,
   isSelfOrDescendant,
   reorderAtDropEdge,
@@ -172,6 +173,17 @@ test('self and descendant targets are detected before a relation write', () => {
   assert.equal(isSelfOrDescendant(tree, 1), true)
   assert.equal(isSelfOrDescendant(tree, 3), true)
   assert.equal(isSelfOrDescendant(tree, 4), false)
+})
+
+test('nesting eligibility rejects self, descendants, and the existing direct parent', () => {
+  const child = {
+    ...tree.children[0],
+    related_tasks: { parenttask: [{ id: 1, title: 'A' }] },
+  }
+  assert.equal(canNestUnder(child, 2), false)
+  assert.equal(canNestUnder(child, 3), false)
+  assert.equal(canNestUnder(child, 1), false)
+  assert.equal(canNestUnder(child, 4), true)
 })
 
 test('failed new relation restores the old parent and refreshes server state', async () => {

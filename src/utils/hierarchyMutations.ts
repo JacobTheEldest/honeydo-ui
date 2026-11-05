@@ -26,6 +26,11 @@ export function isSelfOrDescendant(node: TaskTreeNode, targetId: number): boolea
   return node.children.some((child) => isSelfOrDescendant(child, targetId))
 }
 
+export function canNestUnder(node: TaskTreeNode, targetId: number): boolean {
+  return !isSelfOrDescendant(node, targetId) &&
+    node.related_tasks?.parenttask?.[0]?.id !== targetId
+}
+
 export function reorderAtDropEdge(
   ids: number[],
   activeId: number,

@@ -9,7 +9,7 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown, Sun, Moon } from 'lucide-react'
+import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown, Sun, Moon, ChevronLeft } from 'lucide-react'
 import { useVikunjaApi } from './hooks/useVikunjaApi.ts'
 import { useDarkMode } from './hooks/useDarkMode.ts'
 import { useTaskDragAndDrop, ROOT_DROP_ID } from './hooks/useTaskDragAndDrop.ts'
@@ -34,25 +34,28 @@ import {
   type TaskTreeNode,
   type ParentScope,
 } from './utils/taskTree.ts'
+import { canNestUnder } from './utils/hierarchyMutations.ts'
 import { countDescendants, planUnlabel, type UnlabelDecision } from './utils/unlabel.ts'
 import { HONEYDO_LABEL, DEFAULT_PROJECT_ID } from './config.ts'
 
 function RootPromotionDropTarget({ visible }: { visible: boolean }) {
-  const { setNodeRef, isOver } = useDroppable({ id: ROOT_DROP_ID })
+  const { setNodeRef, isOver } = useDroppable({ id: ROOT_DROP_ID, disabled: !visible })
   return createPortal(
     <div
       ref={setNodeRef}
       data-root-drop-target
+      data-root-drop-active={isOver ? 'true' : undefined}
       aria-hidden={!visible}
-      className={`fixed bottom-20 left-1/2 z-50 flex min-h-12 w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 items-center justify-center rounded-lg border-2 border-dashed px-3 text-sm shadow-lg transition-colors ${
-        visible ? 'visible opacity-100' : 'invisible pointer-events-none opacity-0'
+      aria-label="Promote to top level"
+      style={{ left: 'max(0px, calc((100vw - 36rem) / 2))' }}
+      className={`pointer-events-none fixed top-16 bottom-20 z-50 flex w-12 flex-col items-center justify-center gap-1 rounded-r-lg border-r-2 transition-colors ${
+        visible ? 'visible border-r-honey/40 bg-honey/10 text-honey-dark opacity-100' : 'invisible opacity-0'
       } ${
-        isOver
-          ? 'border-honey bg-honey/15 text-honey-dark dark:bg-honey/20'
-          : 'border-gray-300 text-gray-500 dark:border-gray-600 dark:text-gray-400'
-      }`}
+        isOver ? 'border-r-4 border-r-honey bg-honey/45 text-honey-dark ring-2 ring-inset ring-honey/40 shadow-md' : ''
+      } dark:text-amber-200`}
     >
-      Drop here to make a top-level task
+      <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+      <span className="text-[10px] font-bold uppercase tracking-wide">Top</span>
     </div>,
     document.body
   )
@@ -376,6 +379,10 @@ export default function App() {
           const isCollapsed = collapsed.has(node.id)
           const isActive = dragAndDrop.activeTaskId === node.id
           const subtreeIsDragging = ancestorDragging || isActive
+          const nestDropEnabled = dragAndDrop.activeTaskId === null || (
+            dragAndDrop.activeNode !== null && canNestUnder(dragAndDrop.activeNode, node.id)
+          )
+          const showNestDropZone = (dragAndDrop.activeTaskId !== null || dragAndDrop.isComposerDragging) && nestDropEnabled
           return (
             <Fragment key={`${parentScope}:${node.id}`}>
               {placementMatches && insertionIndex === index && index > 0 && (
@@ -398,6 +405,9 @@ export default function App() {
                 showCompleted={showCompleted}
                 isInDraggedSubtree={ancestorDragging && !isActive}
                 hideDraggedSource={dragAndDrop.nestPreviewTargetId !== null && (isActive || ancestorDragging)}
+                isNestPreviewTarget={dragAndDrop.nestPreviewTargetId === node.id}
+                nestDropEnabled={nestDropEnabled}
+                showNestDropZone={showNestDropZone}
                 parentContext={node.parentContext}
               />
               {!isCollapsed && node.children.length > 0 &&
@@ -523,7 +533,7 @@ export default function App() {
           </div>
         )}
 
-        <RootPromotionDropTarget visible={dragAndDrop.activeTaskId !== null} />
+        <RootPromotionDropTarget visible={dragAndDrop.canPromoteActiveTaskToRoot} />
         {renderNodes(taskTree, ROOT_PARENT)}
       </main>
       <DragOverlay dropAnimation={null}>

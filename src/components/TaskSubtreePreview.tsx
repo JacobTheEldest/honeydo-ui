@@ -22,7 +22,20 @@ export default function TaskSubtreePreview({
     const hasChildren = current.children.length > 0
 
     return (
-      <div key={current.id} data-drag-preview-row={current.id} data-nest-preview-row={placeholder ? current.id : undefined}>
+      <div
+        key={current.id}
+        data-drag-preview-row={current.id}
+        data-nest-preview-row={placeholder ? current.id : undefined}
+        className={placeholder && relativeDepth === 0 ? 'relative' : undefined}
+      >
+        {placeholder && relativeDepth === 0 && (
+          <span
+            data-nest-preview-guide
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-honey/70"
+            style={{ left: `${8 + baseDepth * 16}px` }}
+          />
+        )}
         <div
           className={`flex items-center gap-2 border-b px-4 py-3 last:border-b-0 ${
             placeholder
@@ -51,7 +64,7 @@ export default function TaskSubtreePreview({
       data-nest-placeholder={placeholder ? placeholderTargetId : undefined}
       aria-hidden="true"
       className={placeholder
-        ? 'pointer-events-none w-full opacity-40'
+        ? 'relative pointer-events-none w-full opacity-40'
         : 'pointer-events-none w-full max-w-xl overflow-hidden rounded-lg bg-white opacity-90 shadow-xl ring-1 ring-black/10 dark:bg-gray-800 dark:ring-white/10'}
     >
       {renderNode(node, 0)}

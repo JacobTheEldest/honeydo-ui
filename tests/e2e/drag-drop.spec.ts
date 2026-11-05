@@ -55,15 +55,24 @@ async function dragHandleTo(
     const placeholder = page.locator(`[data-nest-placeholder="${nestTargetId}"]`)
     await expect(placeholder).toBeVisible()
     const activeId = await activeTask.getAttribute('data-task-id')
-    const targetBox = await page.locator(`[data-task-id="${nestTargetId}"]`).boundingBox()
+    const targetRow = page.locator(`[data-task-id="${nestTargetId}"]`)
+    await expect(targetRow).toHaveAttribute('data-nest-preview-target', 'true')
+    await expect(targetRow.locator('[data-nest-target-highlight]')).toBeVisible()
+    const targetBox = await targetRow.boundingBox()
+    const nestZoneBox = await page.locator(`[data-nest-target="${nestTargetId}"]`).boundingBox()
     const placeholderBox = await placeholder.boundingBox()
     expect(targetBox, 'target parent should be measurable').not.toBeNull()
+    expect(nestZoneBox, 'right-side child zone should be measurable').not.toBeNull()
     expect(placeholderBox, 'nested preview should be measurable').not.toBeNull()
-    if (!targetBox || !placeholderBox) throw new Error('target or nesting preview has no bounding box')
+    if (!targetBox || !nestZoneBox || !placeholderBox) throw new Error('target, child zone or preview has no bounding box')
+    expect(nestZoneBox.x).toBeGreaterThan(targetBox.x + targetBox.width * 0.6)
     expect(placeholderBox.y).toBeGreaterThanOrEqual(targetBox.y + targetBox.height - 1)
     const placeholderRow = placeholder.locator(`[data-nest-preview-row="${activeId}"]`).first().locator('div').first()
     await expect(placeholderRow).toHaveCSS('padding-left', '32px')
     await expect(placeholder).toHaveCSS('opacity', '0.4')
+    const guide = placeholder.locator('[data-nest-preview-guide]')
+    await expect(guide).toBeVisible()
+    expect(await guide.boundingBox(), 'indent guide should be measurable').not.toBeNull()
     await expect(activeTask.locator(':scope > div').nth(1)).toHaveCSS('opacity', '0')
   }
   await page.mouse.up()
@@ -169,8 +178,10 @@ test('touch-dragging a handle does not swipe or pull-to-refresh and can nest the
     const handle = page.locator('[data-task-id="2"] [data-drag-handle]')
     const sourceBox = await handle.boundingBox()
     const targetBox = await page.locator('[data-nest-target="1"]').boundingBox()
-    expect(targetBox, 'nest target should be measurable on mobile').not.toBeNull()
-    if (!sourceBox || !targetBox) throw new Error('source or target has no bounding box')
+    const initialTargetRowBox = await page.locator('[data-task-id="1"]').boundingBox()
+    expect(targetBox, 'right-side child zone should be measurable on mobile').not.toBeNull()
+    if (!sourceBox || !targetBox || !initialTargetRowBox) throw new Error('source, target row or child zone has no bounding box')
+    expect(targetBox.x).toBeGreaterThan(initialTargetRowBox.x + initialTargetRowBox.width * 0.6)
 
     const source = { x: sourceBox.x + sourceBox.width / 2, y: sourceBox.y + sourceBox.height / 2 }
     const target = { x: targetBox.x + targetBox.width / 2, y: targetBox.y + targetBox.height / 2 }
@@ -208,12 +219,16 @@ test('touch-dragging a handle does not swipe or pull-to-refresh and can nest the
 
     const nestingPlaceholder = page.locator('[data-nest-placeholder="1"]')
     await expect(nestingPlaceholder).toBeVisible()
+    const targetRow = page.locator('[data-task-id="1"]')
+    await expect(targetRow).toHaveAttribute('data-nest-preview-target', 'true')
+    const targetRowBox = await targetRow.boundingBox()
     const placeholderBox = await nestingPlaceholder.boundingBox()
     expect(placeholderBox, 'touch nesting preview should be measurable').not.toBeNull()
-    if (!placeholderBox) throw new Error('touch nesting preview has no bounding box')
-    expect(placeholderBox.y).toBeGreaterThanOrEqual(targetBox.y + targetBox.height - 1)
+    if (!placeholderBox || !targetRowBox) throw new Error('touch nesting preview or target has no bounding box')
+    expect(placeholderBox.y).toBeGreaterThanOrEqual(targetRowBox.y + targetRowBox.height - 1)
     await expect(nestingPlaceholder.locator('[data-nest-preview-row="2"]').first().locator('div').first()).toHaveCSS('padding-left', '32px')
     await expect(nestingPlaceholder).toHaveCSS('opacity', '0.4')
+    await expect(nestingPlaceholder.locator('[data-nest-preview-guide]')).toBeVisible()
     await expect(activeRow).toHaveCSS('opacity', '0')
     expect(observedRequests.some((entry) => entry.includes('/api/v1/projects')))
       .toBe(false)
@@ -297,7 +312,7 @@ test('dragging a root task down by one sibling persists exactly one position', a
     response.request().method() === 'POST' && response.url().endsWith('/api/v1/tasks/1')
   )
   await dragHandleTo(page, source, {
-    x: targetBox.x + targetBox.width * 0.9,
+    x: targetBox.x + targetBox.width * 0.5,
     y: targetBox.y + targetBox.height * 0.9,
   }, page.locator('[data-task-id="1"]'))
   expect((await updateResponse).ok()).toBe(true)
@@ -328,7 +343,7 @@ test('dragging a root task down by two siblings persists the full move after rel
     response.request().method() === 'POST' && response.url().endsWith('/api/v1/tasks/1')
   )
   await dragHandleTo(page, source, {
-    x: targetBox.x + targetBox.width * 0.9,
+    x: targetBox.x + targetBox.width * 0.5,
     y: targetBox.y + targetBox.height * 0.9,
   }, page.locator('[data-task-id="1"]'))
   expect((await updateResponse).ok()).toBe(true)
@@ -359,7 +374,7 @@ test('dragging a root task two siblings up persists the full move after reload',
     response.request().method() === 'POST' && response.url().endsWith('/api/v1/tasks/5')
   )
   await dragHandleTo(page, source, {
-    x: targetBox.x + targetBox.width * 0.9,
+    x: targetBox.x + targetBox.width * 0.5,
     y: targetBox.y + 2,
   }, page.locator('[data-task-id="5"]'))
   expect((await updateResponse).ok()).toBe(true)
@@ -375,4 +390,69 @@ test('dragging a root task two siblings up persists the full move after reload',
     .sort((a, b) => Date.parse(a.due_date ?? '') - Date.parse(b.due_date ?? ''))
     .map((task) => task.id)
   expect(orderedRoots).toEqual([5, 1, 2])
+})
+
+test('the composer exposes the same right-side child zones while being placed', async ({ page }) => {
+  const writes: string[] = []
+  page.on('request', (request) => {
+    if (request.method() !== 'GET') writes.push(`${request.method()} ${request.url()}`)
+  })
+  await page.goto('/')
+  await page.locator('[data-composer-toggle]').click()
+  const composer = page.locator('[data-task-composer]')
+  const handle = composer.locator('[data-drag-handle]')
+  const handleBox = await handle.boundingBox()
+  const childZone = page.locator('[data-nest-target="1"]')
+  const childZoneBox = await childZone.boundingBox()
+  expect(handleBox).not.toBeNull()
+  expect(childZoneBox).not.toBeNull()
+  if (!handleBox || !childZoneBox) throw new Error('composer handle or child zone has no bounding box')
+
+  const start = { x: handleBox.x + handleBox.width / 2, y: handleBox.y + handleBox.height / 2 }
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  await page.mouse.move(start.x + 12, start.y + 3, { steps: 3 })
+  await page.mouse.move(childZoneBox.x + childZoneBox.width / 2, childZoneBox.y + childZoneBox.height / 2, { steps: 12 })
+  await expect(page.locator('[data-task-id="1"]')).toHaveAttribute('data-nest-preview-target', 'true')
+  await expect(childZone).toContainText('Child')
+  await expect(page.locator('[data-root-drop-target]')).not.toBeVisible()
+
+  await page.keyboard.press('Escape')
+  await page.mouse.up()
+  await expect(composer).toBeVisible()
+  expect(writes).toEqual([])
+})
+
+test('hovering the left-side top-level lane clearly previews root promotion', async ({ page, request }) => {
+  await page.goto('/')
+  const handle = page.locator('[data-task-id="11"] [data-drag-handle]')
+  const zone = page.locator('[data-root-drop-target]')
+  const handleBox = await handle.boundingBox()
+  const zoneBox = await zone.boundingBox()
+  const childZoneBox = await page.locator('[data-nest-target="1"]').boundingBox()
+  expect(handleBox, 'subtask handle should be measurable').not.toBeNull()
+  expect(zoneBox, 'top-level lane should have measurable geometry').not.toBeNull()
+  expect(childZoneBox, 'child zone should have measurable geometry').not.toBeNull()
+  if (!handleBox || !zoneBox || !childZoneBox) throw new Error('source or level drop zone has no bounding box')
+  expect(zoneBox.x + zoneBox.width).toBeLessThan(childZoneBox.x + childZoneBox.width / 2)
+
+  const start = { x: handleBox.x + handleBox.width / 2, y: handleBox.y + handleBox.height / 2 }
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  await page.mouse.move(start.x + 12, start.y + 3, { steps: 3 })
+  await expect(zone).toBeVisible()
+  await page.mouse.move(zoneBox.x + zoneBox.width / 2, zoneBox.y + zoneBox.height / 2, { steps: 12 })
+  await expect(zone).toHaveAttribute('data-root-drop-active', 'true')
+  await expect(zone).toHaveCSS('border-right-style', 'solid')
+
+  const relationRemoval = page.waitForRequest((req) =>
+    req.method() === 'DELETE' && req.url().endsWith('/api/v1/tasks/1/relations/subtask/11')
+  )
+  await page.mouse.up()
+  await relationRemoval
+  await expect.poll(async () => {
+    const response = await request.get('/api/v1/test-state')
+    const state = await response.json() as { parents: Record<string, number> }
+    return state.parents['11']
+  }).toBeUndefined()
 })
