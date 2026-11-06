@@ -12,10 +12,11 @@ interface TaskComposerProps {
   state: ComposerState
   dispatch: (event: ComposerEvent) => void
   onCreate: (title: string, placement: ComposerState['placement']) => Promise<number>
+  depth?: number
 }
 
 /** A transient, draggable insertion row; it is persisted only on submit. */
-export default function TaskComposer({ state, dispatch, onCreate }: TaskComposerProps) {
+export default function TaskComposer({ state, dispatch, onCreate, depth = 0 }: TaskComposerProps) {
   const containerRef = useRef<HTMLFormElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -91,7 +92,8 @@ export default function TaskComposer({ state, dispatch, onCreate }: TaskComposer
         setNodeRef(node)
       }}
       data-task-composer
-      style={{ ...dragStyle, opacity: isDragging ? 0.55 : 1 }}
+      data-composer-depth={depth}
+      style={{ ...dragStyle, opacity: isDragging ? 0.55 : 1, paddingLeft: 16 + depth * 16 }}
       onSubmit={handleSubmit}
       className="relative flex items-center gap-2 px-4 py-3 bg-honey-light dark:bg-honey/10 border-y-2 border-honey/60 dark:border-honey/40 shadow-sm"
     >

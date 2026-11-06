@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useRef, type SyntheticEvent } from 'react'
-import { useDroppable } from '@dnd-kit/core'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useDrag } from '@use-gesture/react'
@@ -27,9 +26,6 @@ interface TaskItemProps {
   showCompleted: boolean
   isInDraggedSubtree: boolean
   hideDraggedSource: boolean
-  isNestPreviewTarget: boolean
-  nestDropEnabled: boolean
-  showNestDropZone: boolean
   parentContext?: string
 }
 
@@ -50,9 +46,6 @@ export default function TaskItem({
   showCompleted,
   isInDraggedSubtree,
   hideDraggedSource,
-  isNestPreviewTarget,
-  nestDropEnabled,
-  showNestDropZone,
   parentContext,
 }: TaskItemProps) {
   const [editing, setEditing] = useState(false)
@@ -72,10 +65,6 @@ export default function TaskItem({
     transform,
     isDragging,
   } = useSortable({ id: sortableId })
-  const { setNodeRef: setNestTargetRef } = useDroppable({
-    id: `nest::${task.id}`,
-    disabled: !nestDropEnabled,
-  })
 
   // The DragOverlay follows the pointer; keep the original row as a stationary
   // source marker so sortable transforms cannot make it jump between slots.
@@ -176,7 +165,6 @@ export default function TaskItem({
       ref={setNodeRef}
       data-task-id={task.id}
       data-sortable-id={sortableId}
-      data-nest-preview-target={isNestPreviewTarget ? 'true' : undefined}
       style={{ ...dndStyle, paddingLeft: indentPx }}
       className={`
         relative overflow-visible
@@ -209,25 +197,10 @@ export default function TaskItem({
         }}
         className={`
           relative flex items-center gap-2 px-4 py-3 border-b border-gray-100 dark:border-gray-700
-          ${isNestPreviewTarget ? 'bg-honey-light dark:bg-honey/10' : 'bg-white dark:bg-gray-800'}
+          bg-white dark:bg-gray-800
           touch-none select-none transition-colors duration-150
         `}
       >
-        <div
-          ref={setNestTargetRef}
-          data-nest-target={task.id}
-          aria-hidden="true"
-          className={`pointer-events-none absolute inset-y-0 right-0 z-10 flex w-1/3 items-center justify-center border-l transition-colors ${
-            showNestDropZone
-              ? isNestPreviewTarget
-                ? 'border-honey/80 bg-honey/30 text-honey-dark'
-                : 'border-honey/30 bg-honey/5 text-honey/70'
-              : 'border-transparent opacity-0'
-          }`}
-        >
-          {showNestDropZone && <span className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide"><span className="text-base leading-none">↳</span> Child</span>}
-        </div>
-        {isNestPreviewTarget && <span aria-hidden="true" data-nest-target-highlight className="pointer-events-none absolute inset-y-0 left-0 z-10 w-1 bg-honey/80" />}
         {/* Fold caret (only when this task has children) */}
         {hasChildren ? (
           <button

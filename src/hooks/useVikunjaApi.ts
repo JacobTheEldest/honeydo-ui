@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { VikunjaTask, VikunjaLabel, CreateTaskPayload, UpdateTaskPayload } from '../types/vikunja.ts'
 import { HONEYDO_LABEL } from '../config.ts'
-import { applyParentChange, type ParentChange } from '../utils/hierarchyMutations.ts'
+import { applyParentChangeToTasks, applyParentChange, type ParentChange } from '../utils/hierarchyMutations.ts'
 import { applyUnlabel, type UnlabelPlan } from '../utils/unlabel.ts'
 
 const API_BASE = '/api/v1'
@@ -228,10 +228,19 @@ export function useVikunjaApi() {
       method: 'POST',
       body: JSON.stringify(payload),
     })
-    // POST /tasks/{id} response does NOT include labels (v2.5.0).
-    // Merge with current task to preserve labels and other omitted fields.
+    // POST /tasks/{id} omits labels and relation writes are separate. Merge
+    // into the latest local task, not the request's stale snapshot, so a due-date
+    // response cannot undo an optimistic parent change made while it was in flight.
     const merged: VikunjaTask = { ...current, ...task, labels: current.labels }
-    setTasks(prev => prev.map(t => t.id === current.id ? merged : t))
+    setTasks((previous) => previous.map((latest) => latest.id === current.id
+      ? {
+          ...latest,
+          ...task,
+          labels: latest.labels ?? current.labels,
+          related_tasks: latest.related_tasks ?? current.related_tasks ?? task.related_tasks,
+        }
+      : latest
+    ))
     return merged
   }, [])
 
@@ -295,32 +304,44 @@ export function useVikunjaApi() {
   }, [])
 
   const changeTaskParent = useCallback(async (change: ParentChange) => {
+    const previousTasks = tasks
+    const labelToAdd = change.labelIdToAdd === undefined
+      ? undefined
+      : labels.find((label) => label.id === change.labelIdToAdd)
+    setTasks((current) => applyParentChangeToTasks(current, change, labelToAdd))
+
     const writeDueDate = async (taskId: number, dueDate: string | null) => {
       const current = tasks.find((task) => task.id === taskId)
       if (!current) throw new Error(`Task ${taskId} is no longer loaded`)
       await updateTask(current, { due_date: dueDate })
     }
 
-    await applyParentChange(change, {
-      removeRelation: async (parentId, childId) => {
-        await apiRequest(`/tasks/${parentId}/relations/subtask/${childId}`, { method: 'DELETE' })
-      },
-      addRelation: async (parentId, childId) => {
-        await apiRequest(`/tasks/${parentId}/relations`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            task_id: parentId,
-            other_task_id: childId,
-            relation_kind: 'subtask',
-          }),
-        })
-      },
-      setDueDate: writeDueDate,
-      addLabel: addLabelToTask,
-      removeLabel: removeLabelFromTask,
-      refresh: fetchTasks,
-    })
-  }, [tasks, updateTask, addLabelToTask, removeLabelFromTask, fetchTasks])
+    try {
+      await applyParentChange(change, {
+        removeRelation: async (parentId, childId) => {
+          await apiRequest(`/tasks/${parentId}/relations/subtask/${childId}`, { method: 'DELETE' })
+        },
+        addRelation: async (parentId, childId) => {
+          await apiRequest(`/tasks/${parentId}/relations`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              task_id: parentId,
+              other_task_id: childId,
+              relation_kind: 'subtask',
+            }),
+          })
+        },
+        setDueDate: writeDueDate,
+        addLabel: addLabelToTask,
+        removeLabel: removeLabelFromTask,
+        refresh: fetchTasks,
+      })
+    } catch (error) {
+      setTasks(previousTasks)
+      await fetchTasks().catch(() => {})
+      throw error
+    }
+  }, [tasks, labels, updateTask, addLabelToTask, removeLabelFromTask, fetchTasks])
 
   /**
    * Remove the Honey-Do label and its sorting due_date from each target task.

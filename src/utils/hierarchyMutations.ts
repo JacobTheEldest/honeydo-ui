@@ -1,4 +1,4 @@
-import type { VikunjaTask } from '../types/vikunja.ts'
+import type { VikunjaLabel, VikunjaTask } from '../types/vikunja.ts'
 import type { TaskTreeNode } from './taskTree.ts'
 
 export interface ParentChangeApi {
@@ -29,6 +29,47 @@ export function isSelfOrDescendant(node: TaskTreeNode, targetId: number): boolea
 export function canNestUnder(node: TaskTreeNode, targetId: number): boolean {
   return !isSelfOrDescendant(node, targetId) &&
     node.related_tasks?.parenttask?.[0]?.id !== targetId
+}
+
+export function applyParentChangeToTasks(
+  tasks: VikunjaTask[],
+  change: ParentChange,
+  labelToAdd?: VikunjaLabel
+): VikunjaTask[] {
+  const movedTask = tasks.find((task) => task.id === change.taskId)
+  if (!movedTask) return tasks
+  const oldParentIds = new Set(change.oldParentIds ?? (change.oldParentId === null ? [] : [change.oldParentId]))
+  const newParent = change.newParentId === null
+    ? undefined
+    : tasks.find((task) => task.id === change.newParentId)
+
+  return tasks.map((task) => {
+    if (task.id === movedTask.id) {
+      const labels = labelToAdd && !task.labels.some((label) => label.id === labelToAdd.id)
+        ? [...task.labels, labelToAdd]
+        : task.labels
+      return {
+        ...task,
+        due_date: change.newDueDate,
+        labels,
+        related_tasks: {
+          ...task.related_tasks,
+          parenttask: newParent ? [{ id: newParent.id, title: newParent.title }] : [],
+        },
+      }
+    }
+
+    if (oldParentIds.has(task.id) || task.id === newParent?.id) {
+      const subtasks = (task.related_tasks?.subtask ?? [])
+        .filter((child) => child.id !== movedTask.id)
+      if (task.id === newParent?.id) subtasks.push({ id: movedTask.id, title: movedTask.title })
+      return {
+        ...task,
+        related_tasks: { ...task.related_tasks, subtask: subtasks },
+      }
+    }
+    return task
+  })
 }
 
 export function reorderAtDropEdge(

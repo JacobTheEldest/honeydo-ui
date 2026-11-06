@@ -6,7 +6,7 @@ async function dragHandleTo(
   handle: Locator,
   target: { x: number; y: number },
   activeTask?: Locator,
-  nestTargetId?: number
+  expectedMode?: 'sibling' | 'child'
 ) {
   const source = await handle.boundingBox()
   expect(source, 'drag handle should be visible and measurable').not.toBeNull()
@@ -16,8 +16,7 @@ async function dragHandleTo(
   const initialPointer = { x: start.x + 12, y: start.y + 3 }
   await page.mouse.move(start.x, start.y)
   await page.mouse.down()
-  // Follow the actual overlay during movement. The origin row is dimmed until
-  // a nest destination is active, when the target placeholder takes over.
+  // Follow the pointer overlay while the in-list simulated drop space updates.
   await page.mouse.move(initialPointer.x, initialPointer.y, { steps: 3 })
   await page.waitForTimeout(100)
   if (activeTask) {
@@ -44,35 +43,30 @@ async function dragHandleTo(
       const drift = Math.abs(actualCenterY - expectedCenterY)
       expect(drift, `drag preview drifted at step ${step}: actualY=${actualCenterY}, expectedY=${expectedCenterY}, pointerY=${pointerY}`)
         .toBeLessThan(20)
-      const hasNestDestination = await page.locator('[data-nest-placeholder]').count() > 0
-      await expect(activeRow).toHaveCSS('opacity', hasNestDestination ? '0' : '0.5')
+      const hasDropDestination = await page.locator('[data-drop-preview]').count() > 0
+      await expect(activeRow).toHaveCSS('opacity', hasDropDestination ? '0' : '0.5')
     }
   } else {
     await page.mouse.move(target.x, target.y, { steps: 12 })
   }
   await page.waitForTimeout(100)
-  if (nestTargetId !== undefined && activeTask) {
-    const placeholder = page.locator(`[data-nest-placeholder="${nestTargetId}"]`)
-    await expect(placeholder).toBeVisible()
+  if (expectedMode !== undefined && activeTask) {
+    const placeholder = page.locator('[data-drop-preview]')
+    await expect(placeholder).toHaveAttribute('data-drop-preview-mode', expectedMode)
     const activeId = await activeTask.getAttribute('data-task-id')
-    const targetRow = page.locator(`[data-task-id="${nestTargetId}"]`)
-    await expect(targetRow).toHaveAttribute('data-nest-preview-target', 'true')
-    await expect(targetRow.locator('[data-nest-target-highlight]')).toBeVisible()
-    const targetBox = await targetRow.boundingBox()
-    const nestZoneBox = await page.locator(`[data-nest-target="${nestTargetId}"]`).boundingBox()
     const placeholderBox = await placeholder.boundingBox()
-    expect(targetBox, 'target parent should be measurable').not.toBeNull()
-    expect(nestZoneBox, 'right-side child zone should be measurable').not.toBeNull()
-    expect(placeholderBox, 'nested preview should be measurable').not.toBeNull()
-    if (!targetBox || !nestZoneBox || !placeholderBox) throw new Error('target, child zone or preview has no bounding box')
-    expect(nestZoneBox.x).toBeGreaterThan(targetBox.x + targetBox.width * 0.6)
-    expect(placeholderBox.y).toBeGreaterThanOrEqual(targetBox.y + targetBox.height - 1)
-    const placeholderRow = placeholder.locator(`[data-nest-preview-row="${activeId}"]`).first().locator('div').first()
-    await expect(placeholderRow).toHaveCSS('padding-left', '32px')
-    await expect(placeholder).toHaveCSS('opacity', '0.4')
-    const guide = placeholder.locator('[data-nest-preview-guide]')
+    expect(placeholderBox, 'drop preview should be measurable').not.toBeNull()
+    if (!placeholderBox) throw new Error('drop preview has no bounding box')
+    const placeholderRow = placeholder.locator(`[data-drop-preview-row="${activeId}"]`).first().locator(':scope > div').first()
+    await expect(placeholderRow).toHaveCSS('padding-left', expectedMode === 'child' ? '32px' : '16px')
+    await expect(placeholder).toHaveCSS('opacity', '0.6')
+    await expect(placeholder.locator('[data-drop-preview-half="sibling"]')).toBeVisible()
+    await expect(placeholder.locator('[data-drop-preview-half="child"]')).toBeVisible()
+    const guide = placeholder.locator('[data-drop-preview-guide]')
     await expect(guide).toBeVisible()
     expect(await guide.boundingBox(), 'indent guide should be measurable').not.toBeNull()
+    await expect(page.locator('[data-nest-target]')).toHaveCount(0)
+    await expect(page.locator('[data-root-drop-target]')).toHaveCount(0)
     await expect(activeTask.locator(':scope > div').nth(1)).toHaveCSS('opacity', '0')
   }
   await page.mouse.up()
@@ -97,18 +91,43 @@ test('dragging a root task onto a parent creates and renders the subtask relatio
   await expect(page.locator('[data-task-id="2"]')).toBeVisible()
 
   const source = page.locator('[data-task-id="2"] [data-drag-handle]')
-  const targetBox = await page.locator('[data-nest-target="1"]').boundingBox()
-  expect(targetBox, 'parent nest target should have a non-zero hit box').not.toBeNull()
-  if (!targetBox) throw new Error('nest target has no bounding box')
+  const belowBox = await page.locator('[data-task-id="11"]').boundingBox()
+  const listBox = await page.locator('main').boundingBox()
+  expect(belowBox, 'the first child row below the parent should be measurable').not.toBeNull()
+  expect(listBox).not.toBeNull()
+  if (!belowBox || !listBox) throw new Error('drop slot or task list has no bounding box')
 
+  let holdRelation = false
+  let releaseRelation!: () => void
+  let relationArrived!: () => void
+  const relationGate = new Promise<void>((resolve) => { releaseRelation = resolve })
+  const relationRequestArrived = new Promise<void>((resolve) => { relationArrived = resolve })
+  await page.route('**/api/v1/tasks/1/relations', async (route) => {
+    if (holdRelation && route.request().method() === 'PUT') {
+      relationArrived()
+      await relationGate
+    }
+    await route.continue()
+  })
   const relationRequest = page.waitForRequest((req) =>
     req.method() === 'PUT' && req.url().endsWith('/api/v1/tasks/1/relations')
   )
+  const relationResponse = page.waitForResponse((response) =>
+    response.request().method() === 'PUT' && response.url().endsWith('/api/v1/tasks/1/relations')
+  )
+  holdRelation = true
   await dragHandleTo(page, source, {
-    x: targetBox.x + targetBox.width / 2,
-    y: targetBox.y + targetBox.height / 2,
-  }, page.locator('[data-task-id="2"]'), 1)
+    x: listBox.x + listBox.width * 0.75,
+    y: belowBox.y + 2,
+  }, page.locator('[data-task-id="2"]'), 'child')
   await relationRequest
+  await relationRequestArrived
+  try {
+    await expect(page.locator('[data-task-id="2"]')).toHaveAttribute('data-sortable-id', '1::2', { timeout: 500 })
+  } finally {
+    releaseRelation()
+  }
+  await relationResponse
 
   await expect.poll(async () => {
     const response = await request.get('/api/v1/test-state')
@@ -120,11 +139,9 @@ test('dragging a root task onto a parent creates and renders the subtask relatio
     return state.parents['2']
   }).toBe(1)
 
+  await expect(page.locator('[data-task-id="2"]')).toHaveAttribute('style', /padding-left:\s*16px/)
   await page.reload()
-  const movedTask = page.locator('[data-task-id="2"]')
-  await expect(movedTask).toBeVisible()
-  await expect(movedTask).toHaveAttribute('style', /padding-left:\s*16px/)
-  await expect(movedTask).toHaveAttribute('data-sortable-id', /1::2/)
+  await expect(page.locator('[data-task-id="2"]')).toHaveAttribute('data-sortable-id', '1::2')
 })
 
 test('a long vertical drag onto a parent stays attached to the pointer and persists nesting', async ({ page, request }) => {
@@ -134,17 +151,19 @@ test('a long vertical drag onto a parent stays attached to the pointer and persi
   await page.goto('/')
   const sourceTask = page.locator('[data-task-id="3019"]')
   const source = sourceTask.locator('[data-drag-handle]')
-  const targetBox = await page.locator('[data-nest-target="1"]').boundingBox()
-  expect(targetBox).not.toBeNull()
-  if (!targetBox) throw new Error('parent nest target has no bounding box')
+  const belowBox = await page.locator('[data-task-id="11"]').boundingBox()
+  const listBox = await page.locator('main').boundingBox()
+  expect(belowBox).not.toBeNull()
+  expect(listBox).not.toBeNull()
+  if (!belowBox || !listBox) throw new Error('drop slot or task list has no bounding box')
 
   const relationRequest = page.waitForRequest((req) =>
     req.method() === 'PUT' && req.url().endsWith('/api/v1/tasks/1/relations')
   )
   await dragHandleTo(page, source, {
-    x: targetBox.x + targetBox.width / 2,
-    y: targetBox.y + targetBox.height / 2,
-  }, sourceTask, 1)
+    x: listBox.x + listBox.width * 0.75,
+    y: belowBox.y + 2,
+  }, sourceTask, 'child')
   await relationRequest
 
   const response = await request.get('/api/v1/test-state')
@@ -177,14 +196,14 @@ test('touch-dragging a handle does not swipe or pull-to-refresh and can nest the
     observedRequests.length = 0
     const handle = page.locator('[data-task-id="2"] [data-drag-handle]')
     const sourceBox = await handle.boundingBox()
-    const targetBox = await page.locator('[data-nest-target="1"]').boundingBox()
+    const belowBox = await page.locator('[data-task-id="11"]').boundingBox()
+    const listBox = await page.locator('main').boundingBox()
     const initialTargetRowBox = await page.locator('[data-task-id="1"]').boundingBox()
-    expect(targetBox, 'right-side child zone should be measurable on mobile').not.toBeNull()
-    if (!sourceBox || !targetBox || !initialTargetRowBox) throw new Error('source, target row or child zone has no bounding box')
-    expect(targetBox.x).toBeGreaterThan(initialTargetRowBox.x + initialTargetRowBox.width * 0.6)
+    expect(belowBox, 'the first child row below the parent should be measurable on mobile').not.toBeNull()
+    if (!sourceBox || !belowBox || !listBox || !initialTargetRowBox) throw new Error('source, drop slot or parent has no bounding box')
 
     const source = { x: sourceBox.x + sourceBox.width / 2, y: sourceBox.y + sourceBox.height / 2 }
-    const target = { x: targetBox.x + targetBox.width / 2, y: targetBox.y + targetBox.height / 2 }
+    const target = { x: listBox.x + listBox.width * 0.75, y: belowBox.y + 2 }
     const touch = (x: number, y: number) => ({ x, y, id: 1, radiusX: 2, radiusY: 2, force: 1 })
 
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [touch(source.x, source.y)] })
@@ -213,22 +232,25 @@ test('touch-dragging a handle does not swipe or pull-to-refresh and can nest the
       const expectedCenterY = y + previewCenterOffset
       expect(Math.abs(previewBox.y + previewBox.height / 2 - expectedCenterY), `touch preview drifted at step ${step}`)
         .toBeLessThan(20)
-      const hasNestDestination = await page.locator('[data-nest-placeholder]').count() > 0
-      await expect(activeRow).toHaveCSS('opacity', hasNestDestination ? '0' : '0.5')
+      const hasDropDestination = await page.locator('[data-drop-preview]').count() > 0
+      await expect(activeRow).toHaveCSS('opacity', hasDropDestination ? '0' : '0.5')
     }
 
-    const nestingPlaceholder = page.locator('[data-nest-placeholder="1"]')
-    await expect(nestingPlaceholder).toBeVisible()
+    const nestingPlaceholder = page.locator('[data-drop-preview]')
+    await expect(nestingPlaceholder).toHaveAttribute('data-drop-preview-mode', 'child')
     const targetRow = page.locator('[data-task-id="1"]')
-    await expect(targetRow).toHaveAttribute('data-nest-preview-target', 'true')
     const targetRowBox = await targetRow.boundingBox()
     const placeholderBox = await nestingPlaceholder.boundingBox()
     expect(placeholderBox, 'touch nesting preview should be measurable').not.toBeNull()
     if (!placeholderBox || !targetRowBox) throw new Error('touch nesting preview or target has no bounding box')
     expect(placeholderBox.y).toBeGreaterThanOrEqual(targetRowBox.y + targetRowBox.height - 1)
-    await expect(nestingPlaceholder.locator('[data-nest-preview-row="2"]').first().locator('div').first()).toHaveCSS('padding-left', '32px')
-    await expect(nestingPlaceholder).toHaveCSS('opacity', '0.4')
-    await expect(nestingPlaceholder.locator('[data-nest-preview-guide]')).toBeVisible()
+    await expect(nestingPlaceholder.locator('[data-drop-preview-row="2"]').first().locator(':scope > div').first()).toHaveCSS('padding-left', '32px')
+    await expect(nestingPlaceholder).toHaveCSS('opacity', '0.6')
+    await expect(nestingPlaceholder.locator('[data-drop-preview-half="sibling"]')).toBeVisible()
+    await expect(nestingPlaceholder.locator('[data-drop-preview-half="child"]')).toBeVisible()
+    await expect(nestingPlaceholder.locator('[data-drop-preview-guide]')).toBeVisible()
+    await expect(page.locator('[data-nest-target]')).toHaveCount(0)
+    await expect(page.locator('[data-root-drop-target]')).toHaveCount(0)
     await expect(activeRow).toHaveCSS('opacity', '0')
     expect(observedRequests.some((entry) => entry.includes('/api/v1/projects')))
       .toBe(false)
@@ -302,19 +324,38 @@ test('pull-to-refresh remains active from non-handle content', async ({ browser 
 test('dragging a root task down by one sibling persists exactly one position', async ({ page, request }) => {
   await page.goto('/')
   const source = page.locator('[data-task-id="1"] [data-drag-handle]')
-  const targetRow = page.locator('[data-task-id="2"]')
+  const targetRow = page.locator('[data-task-id="5"]')
   await expect(source).toBeVisible()
   const targetBox = await targetRow.boundingBox()
   expect(targetBox).not.toBeNull()
   if (!targetBox) throw new Error('target row has no bounding box')
 
+  let holdUpdate = false
+  let releaseUpdate!: () => void
+  let updateArrived!: () => void
+  const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve })
+  const updateRequestArrived = new Promise<void>((resolve) => { updateArrived = resolve })
+  await page.route('**/api/v1/tasks/1', async (route) => {
+    if (holdUpdate && route.request().method() === 'POST') {
+      updateArrived()
+      await updateGate
+    }
+    await route.continue()
+  })
   const updateResponse = page.waitForResponse((response) =>
     response.request().method() === 'POST' && response.url().endsWith('/api/v1/tasks/1')
   )
+  holdUpdate = true
   await dragHandleTo(page, source, {
-    x: targetBox.x + targetBox.width * 0.5,
-    y: targetBox.y + targetBox.height * 0.9,
-  }, page.locator('[data-task-id="1"]'))
+    x: targetBox.x + targetBox.width * 0.4,
+    y: targetBox.y + 2,
+  }, page.locator('[data-task-id="1"]'), 'sibling')
+  await updateRequestArrived
+  try {
+    expect((await renderedRootIds(page)).slice(0, 3)).toEqual(['2', '1', '5'])
+  } finally {
+    releaseUpdate()
+  }
   expect((await updateResponse).ok()).toBe(true)
 
   await page.reload()
@@ -333,7 +374,7 @@ test('dragging a root task down by one sibling persists exactly one position', a
 test('dragging a root task down by two siblings persists the full move after reload', async ({ page, request }) => {
   await page.goto('/')
   const source = page.locator('[data-task-id="1"] [data-drag-handle]')
-  const targetRow = page.locator('[data-task-id="5"]')
+  const targetRow = page.locator('[data-task-id="31"]')
   await expect(source).toBeVisible()
   const targetBox = await targetRow.boundingBox()
   expect(targetBox).not.toBeNull()
@@ -343,9 +384,9 @@ test('dragging a root task down by two siblings persists the full move after rel
     response.request().method() === 'POST' && response.url().endsWith('/api/v1/tasks/1')
   )
   await dragHandleTo(page, source, {
-    x: targetBox.x + targetBox.width * 0.5,
-    y: targetBox.y + targetBox.height * 0.9,
-  }, page.locator('[data-task-id="1"]'))
+    x: targetBox.x + targetBox.width * 0.4,
+    y: targetBox.y + 2,
+  }, page.locator('[data-task-id="1"]'), 'sibling')
   expect((await updateResponse).ok()).toBe(true)
 
   await page.reload()
@@ -374,9 +415,9 @@ test('dragging a root task two siblings up persists the full move after reload',
     response.request().method() === 'POST' && response.url().endsWith('/api/v1/tasks/5')
   )
   await dragHandleTo(page, source, {
-    x: targetBox.x + targetBox.width * 0.5,
+    x: targetBox.x + targetBox.width * 0.4,
     y: targetBox.y + 2,
-  }, page.locator('[data-task-id="5"]'))
+  }, page.locator('[data-task-id="5"]'), 'sibling')
   expect((await updateResponse).ok()).toBe(true)
 
   await page.reload()
@@ -392,7 +433,7 @@ test('dragging a root task two siblings up persists the full move after reload',
   expect(orderedRoots).toEqual([5, 1, 2])
 })
 
-test('the composer exposes the same right-side child zones while being placed', async ({ page }) => {
+test('the composer uses the simulated split preview when being placed', async ({ page }) => {
   const writes: string[] = []
   page.on('request', (request) => {
     if (request.method() !== 'GET') writes.push(`${request.method()} ${request.url()}`)
@@ -402,57 +443,96 @@ test('the composer exposes the same right-side child zones while being placed', 
   const composer = page.locator('[data-task-composer]')
   const handle = composer.locator('[data-drag-handle]')
   const handleBox = await handle.boundingBox()
-  const childZone = page.locator('[data-nest-target="1"]')
-  const childZoneBox = await childZone.boundingBox()
+  const belowBox = await page.locator('[data-task-id="11"]').boundingBox()
+  const listBox = await page.locator('main').boundingBox()
   expect(handleBox).not.toBeNull()
-  expect(childZoneBox).not.toBeNull()
-  if (!handleBox || !childZoneBox) throw new Error('composer handle or child zone has no bounding box')
+  expect(belowBox).not.toBeNull()
+  expect(listBox).not.toBeNull()
+  if (!handleBox || !belowBox || !listBox) throw new Error('composer or target rows have no bounding box')
 
   const start = { x: handleBox.x + handleBox.width / 2, y: handleBox.y + handleBox.height / 2 }
   await page.mouse.move(start.x, start.y)
   await page.mouse.down()
   await page.mouse.move(start.x + 12, start.y + 3, { steps: 3 })
-  await page.mouse.move(childZoneBox.x + childZoneBox.width / 2, childZoneBox.y + childZoneBox.height / 2, { steps: 12 })
-  await expect(page.locator('[data-task-id="1"]')).toHaveAttribute('data-nest-preview-target', 'true')
-  await expect(childZone).toContainText('Child')
-  await expect(page.locator('[data-root-drop-target]')).not.toBeVisible()
+  await page.mouse.move(listBox.x + listBox.width * 0.75, belowBox.y + 2, { steps: 12 })
+  const preview = page.locator('[data-drop-preview]')
+  await expect(preview).toHaveAttribute('data-drop-preview-mode', 'child')
+  await expect(preview.locator('[data-drop-preview-row="-1"]')).toBeVisible()
+  await expect(preview.locator('[data-drop-preview-half="sibling"]')).toBeVisible()
+  await expect(preview.locator('[data-drop-preview-half="child"]')).toBeVisible()
+  await expect(page.locator('[data-nest-target]')).toHaveCount(0)
+  await expect(page.locator('[data-root-drop-target]')).toHaveCount(0)
 
-  await page.keyboard.press('Escape')
   await page.mouse.up()
   await expect(composer).toBeVisible()
+  await expect(composer).toHaveAttribute('data-composer-depth', '1')
+  await expect(composer).toHaveCSS('padding-left', '32px')
   expect(writes).toEqual([])
 })
 
-test('hovering the left-side top-level lane clearly previews root promotion', async ({ page, request }) => {
+test('the left half of the simulated slot promotes a task as a sibling of the row below', async ({ page, request }) => {
   await page.goto('/')
   const handle = page.locator('[data-task-id="11"] [data-drag-handle]')
-  const zone = page.locator('[data-root-drop-target]')
+  const belowRow = page.locator('[data-task-id="2"]')
   const handleBox = await handle.boundingBox()
-  const zoneBox = await zone.boundingBox()
-  const childZoneBox = await page.locator('[data-nest-target="1"]').boundingBox()
+  const belowBox = await belowRow.boundingBox()
+  const listBox = await page.locator('main').boundingBox()
   expect(handleBox, 'subtask handle should be measurable').not.toBeNull()
-  expect(zoneBox, 'top-level lane should have measurable geometry').not.toBeNull()
-  expect(childZoneBox, 'child zone should have measurable geometry').not.toBeNull()
-  if (!handleBox || !zoneBox || !childZoneBox) throw new Error('source or level drop zone has no bounding box')
-  expect(zoneBox.x + zoneBox.width).toBeLessThan(childZoneBox.x + childZoneBox.width / 2)
+  expect(belowBox, 'the next root row should be measurable').not.toBeNull()
+  expect(listBox).not.toBeNull()
+  if (!handleBox || !belowBox || !listBox) throw new Error('source or simulated drop slot has no bounding box')
 
   const start = { x: handleBox.x + handleBox.width / 2, y: handleBox.y + handleBox.height / 2 }
-  await page.mouse.move(start.x, start.y)
-  await page.mouse.down()
-  await page.mouse.move(start.x + 12, start.y + 3, { steps: 3 })
-  await expect(zone).toBeVisible()
-  await page.mouse.move(zoneBox.x + zoneBox.width / 2, zoneBox.y + zoneBox.height / 2, { steps: 12 })
-  await expect(zone).toHaveAttribute('data-root-drop-active', 'true')
-  await expect(zone).toHaveCSS('border-right-style', 'solid')
-
+  let holdRemoval = false
+  let releaseRemoval!: () => void
+  let removalArrived!: () => void
+  const removalGate = new Promise<void>((resolve) => { releaseRemoval = resolve })
+  const removalRequestArrived = new Promise<void>((resolve) => { removalArrived = resolve })
+  await page.route('**/api/v1/tasks/1/relations/subtask/11', async (route) => {
+    if (holdRemoval && route.request().method() === 'DELETE') {
+      removalArrived()
+      await removalGate
+    }
+    await route.continue()
+  })
   const relationRemoval = page.waitForRequest((req) =>
     req.method() === 'DELETE' && req.url().endsWith('/api/v1/tasks/1/relations/subtask/11')
   )
+  const relationRemovalResponse = page.waitForResponse((response) =>
+    response.request().method() === 'DELETE' && response.url().endsWith('/api/v1/tasks/1/relations/subtask/11')
+  )
+  holdRemoval = true
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  await page.mouse.move(start.x + 12, start.y + 3, { steps: 3 })
+  await page.mouse.move(listBox.x + listBox.width * 0.25, belowBox.y + 2, { steps: 12 })
+  const preview = page.locator('[data-drop-preview]')
+  await expect(preview).toHaveAttribute('data-drop-preview-mode', 'sibling')
+  await expect(preview.locator('[data-drop-preview-half="sibling"]')).toBeVisible()
+  await expect(preview.locator('[data-drop-preview-half="child"]')).toBeVisible()
+  await expect(page.locator('[data-nest-target]')).toHaveCount(0)
+  await expect(page.locator('[data-root-drop-target]')).toHaveCount(0)
+
   await page.mouse.up()
   await relationRemoval
+  await removalRequestArrived
+  try {
+    await expect(page.locator('[data-task-id="11"]')).toHaveAttribute('data-sortable-id', 'r::11', { timeout: 500 })
+    expect((await renderedRootIds(page)).slice(0, 3)).toEqual(['1', '11', '2'])
+  } finally {
+    releaseRemoval()
+  }
+  await relationRemovalResponse
   await expect.poll(async () => {
     const response = await request.get('/api/v1/test-state')
-    const state = await response.json() as { parents: Record<string, number> }
-    return state.parents['11']
-  }).toBeUndefined()
+    const state = await response.json() as {
+      parents: Record<string, number>
+      tasks: Array<{ id: number; labels: Array<{ title: string }> }>
+    }
+    expect(state.parents['11']).toBeUndefined()
+    return state.tasks.find((task) => task.id === 11)?.labels.some((label) => label.title === 'Honey-Do')
+  }).toBe(true)
+  await expect(page.locator('[data-task-id="11"]')).toHaveAttribute('data-sortable-id', 'r::11')
+  await page.reload()
+  await expect(page.locator('[data-task-id="11"]')).toHaveAttribute('data-sortable-id', 'r::11')
 })

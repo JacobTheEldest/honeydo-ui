@@ -3,6 +3,7 @@ import test from 'node:test'
 import type { ParentChangeApi } from '../src/utils/hierarchyMutations.ts'
 import {
   applyParentChange,
+  applyParentChangeToTasks,
   canNestUnder,
   canPromoteToRoot,
   isSelfOrDescendant,
@@ -184,6 +185,39 @@ test('nesting eligibility rejects self, descendants, and the existing direct par
   assert.equal(canNestUnder(child, 3), false)
   assert.equal(canNestUnder(child, 1), false)
   assert.equal(canNestUnder(child, 4), true)
+})
+
+test('local parent updates immediately reparent roots and promotions', () => {
+  const tasks = [
+    { ...tree, related_tasks: { subtask: [{ id: 2, title: 'B' }] } },
+    { ...tree.children[0], related_tasks: { parenttask: [{ id: 1, title: 'A' }] } },
+    { ...tree, id: 4, title: 'D', labels: [], related_tasks: { subtask: [] } },
+  ]
+  const nested = applyParentChangeToTasks(tasks, change({
+    taskId: 4,
+    oldParentId: null,
+    oldParentIds: [],
+    newParentId: 1,
+    oldDueDate: null,
+    newDueDate: 'nested-position',
+  }))
+  assert.deepEqual(nested.find((task) => task.id === 4)?.related_tasks?.parenttask, [{ id: 1, title: 'A' }])
+  assert.equal(nested.find((task) => task.id === 1)?.related_tasks?.subtask?.some((child) => child.id === 4), true)
+  assert.equal(nested.find((task) => task.id === 4)?.due_date, 'nested-position')
+
+  const promoted = applyParentChangeToTasks(nested, change({
+    taskId: 2,
+    oldParentId: 1,
+    oldParentIds: [1],
+    newParentId: null,
+    oldDueDate: null,
+    newDueDate: 'root-position',
+    labelIdToAdd: 7,
+  }), { id: 7, title: 'Honey-Do' })
+  assert.deepEqual(promoted.find((task) => task.id === 2)?.related_tasks?.parenttask, [])
+  assert.equal(promoted.find((task) => task.id === 1)?.related_tasks?.subtask?.some((child) => child.id === 2), false)
+  assert.equal(promoted.find((task) => task.id === 2)?.labels.some((label) => label.id === 7), true)
+  assert.equal(promoted.find((task) => task.id === 2)?.due_date, 'root-position')
 })
 
 test('failed new relation restores the old parent and refreshes server state', async () => {

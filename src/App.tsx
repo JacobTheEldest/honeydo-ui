@@ -1,18 +1,16 @@
 import { useEffect, useState, useCallback, useMemo, useReducer, useRef, Fragment, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
 import {
   DndContext,
   DragOverlay,
-  useDroppable,
 } from '@dnd-kit/core'
 import {
   SortableContext,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown, Sun, Moon, ChevronLeft } from 'lucide-react'
+import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown, Sun, Moon } from 'lucide-react'
 import { useVikunjaApi } from './hooks/useVikunjaApi.ts'
 import { useDarkMode } from './hooks/useDarkMode.ts'
-import { useTaskDragAndDrop, ROOT_DROP_ID } from './hooks/useTaskDragAndDrop.ts'
+import { useTaskDragAndDrop } from './hooks/useTaskDragAndDrop.ts'
 import { usePullToRefresh } from './hooks/usePullToRefresh.ts'
 import TaskItem from './components/TaskItem.tsx'
 import TaskSubtreePreview from './components/TaskSubtreePreview.tsx'
@@ -34,32 +32,8 @@ import {
   type TaskTreeNode,
   type ParentScope,
 } from './utils/taskTree.ts'
-import { canNestUnder } from './utils/hierarchyMutations.ts'
 import { countDescendants, planUnlabel, type UnlabelDecision } from './utils/unlabel.ts'
 import { HONEYDO_LABEL, DEFAULT_PROJECT_ID } from './config.ts'
-
-function RootPromotionDropTarget({ visible }: { visible: boolean }) {
-  const { setNodeRef, isOver } = useDroppable({ id: ROOT_DROP_ID, disabled: !visible })
-  return createPortal(
-    <div
-      ref={setNodeRef}
-      data-root-drop-target
-      data-root-drop-active={isOver ? 'true' : undefined}
-      aria-hidden={!visible}
-      aria-label="Promote to top level"
-      style={{ left: 'max(0px, calc((100vw - 36rem) / 2))' }}
-      className={`pointer-events-none fixed top-16 bottom-20 z-50 flex w-12 flex-col items-center justify-center gap-1 rounded-r-lg border-r-2 transition-colors ${
-        visible ? 'visible border-r-honey/40 bg-honey/10 text-honey-dark opacity-100' : 'invisible opacity-0'
-      } ${
-        isOver ? 'border-r-4 border-r-honey bg-honey/45 text-honey-dark ring-2 ring-inset ring-honey/40 shadow-md' : ''
-      } dark:text-amber-200`}
-    >
-      <ChevronLeft className="h-5 w-5" aria-hidden="true" />
-      <span className="text-[10px] font-bold uppercase tracking-wide">Top</span>
-    </div>,
-    document.body
-  )
-}
 
 export default function App() {
   const {
@@ -346,6 +320,22 @@ export default function App() {
     notify,
   })
 
+  const composerPreviewNode = useMemo<TaskTreeNode>(() => ({
+    id: -1,
+    title: composerState.title.trim() || 'New task',
+    description: '',
+    done: false,
+    done_at: null,
+    due_date: null,
+    project_id: DEFAULT_PROJECT_ID,
+    labels: [],
+    created: '',
+    updated: '',
+    children: [],
+    depth: 0,
+  }), [composerState.title])
+  const dragPreviewNode = dragAndDrop.activeNode ?? (dragAndDrop.isComposerDragging ? composerPreviewNode : null)
+
   const { mainRef, pullDistance, isRefreshing, bindPull, rememberPullOrigin } = usePullToRefresh(fetchTasks)
 
   const allCollapsed = collapsed.size > 0
@@ -356,7 +346,8 @@ export default function App() {
   const renderNodes = (
     nodes: TaskTreeNode[],
     parentScope: ParentScope,
-    ancestorDragging = false
+    ancestorDragging = false,
+    baseDepth = 0
   ): ReactNode => {
     const visible = nodes.filter((n) => !hiddenByAncestor.has(n.id))
     const parentId = parentScope === ROOT_PARENT ? null : parentScope
@@ -365,28 +356,43 @@ export default function App() {
     const beforeIndex = placement.beforeTaskId === null ? -1 : visible.findIndex((node) => node.id === placement.beforeTaskId)
     const afterIndex = placement.afterTaskId === null ? -1 : visible.findIndex((node) => node.id === placement.afterTaskId)
     const insertionIndex = beforeIndex >= 0 ? beforeIndex : afterIndex >= 0 ? afterIndex + 1 : 0
-    if (visible.length === 0 && !placementMatches) return null
+    const drop = dragAndDrop.dropPreview
+    const dropMatches = drop !== null && drop.parentId === parentId && dragPreviewNode !== null
+    const requestedDropIndex = drop?.beforeTaskId === null ? visible.length : visible.findIndex((node) => node.id === drop?.beforeTaskId)
+    const dropIndex = dropMatches
+      ? requestedDropIndex >= 0 ? requestedDropIndex : visible.length
+      : -1
+    if (visible.length === 0 && !placementMatches && !dropMatches) return null
+    const renderDropPreview = () => dropMatches && drop && dragPreviewNode ? (
+      <TaskSubtreePreview
+        node={dragPreviewNode}
+        collapsed={collapsed}
+        baseDepth={drop.baseDepth}
+        placeholder
+        dropMode={drop.mode}
+        siblingAnchor={drop.beforeTaskId === null ? 'above' : 'below'}
+      />
+    ) : null
     return (
       <SortableContext
         key={String(parentScope)}
         items={visible.map((n) => encodeGroupItemId(parentScope, n.id))}
         strategy={verticalListSortingStrategy}
       >
+        {visible.length === 0 && dropIndex === 0 && renderDropPreview()}
         {placementMatches && insertionIndex === 0 && (
-          <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} />
+          <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} depth={baseDepth} />
         )}
         {visible.map((node, index) => {
           const isCollapsed = collapsed.has(node.id)
           const isActive = dragAndDrop.activeTaskId === node.id
           const subtreeIsDragging = ancestorDragging || isActive
-          const nestDropEnabled = dragAndDrop.activeTaskId === null || (
-            dragAndDrop.activeNode !== null && canNestUnder(dragAndDrop.activeNode, node.id)
-          )
-          const showNestDropZone = (dragAndDrop.activeTaskId !== null || dragAndDrop.isComposerDragging) && nestDropEnabled
+          const childDropPreview = drop?.mode === 'child' && drop.parentId === node.id
           return (
             <Fragment key={`${parentScope}:${node.id}`}>
+              {dropIndex === index && renderDropPreview()}
               {placementMatches && insertionIndex === index && index > 0 && (
-                <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} />
+                <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} depth={baseDepth} />
               )}
               <TaskItem
                 task={node}
@@ -404,28 +410,18 @@ export default function App() {
                 onMenuOpenChange={handleMenuOpenChange}
                 showCompleted={showCompleted}
                 isInDraggedSubtree={ancestorDragging && !isActive}
-                hideDraggedSource={dragAndDrop.nestPreviewTargetId !== null && (isActive || ancestorDragging)}
-                isNestPreviewTarget={dragAndDrop.nestPreviewTargetId === node.id}
-                nestDropEnabled={nestDropEnabled}
-                showNestDropZone={showNestDropZone}
+                hideDraggedSource={dragAndDrop.dropPreview !== null && (isActive || ancestorDragging)}
                 parentContext={node.parentContext}
               />
-              {!isCollapsed && node.children.length > 0 &&
-                renderNodes(node.children, node.id, subtreeIsDragging)}
-              {dragAndDrop.nestPreviewTargetId === node.id && dragAndDrop.activeNode && (
-                <TaskSubtreePreview
-                  node={dragAndDrop.activeNode}
-                  collapsed={collapsed}
-                  baseDepth={node.depth + 1}
-                  placeholder
-                  placeholderTargetId={node.id}
-                />
-              )}
+              {!isCollapsed && (node.children.length > 0 || childDropPreview) &&
+                renderNodes(node.children, node.id, subtreeIsDragging, node.depth + 1)}
+              {isCollapsed && childDropPreview && renderNodes([], node.id, subtreeIsDragging, node.depth + 1)}
             </Fragment>
           )
         })}
+        {dropIndex === visible.length && dropIndex !== 0 && renderDropPreview()}
         {placementMatches && insertionIndex === visible.length && (
-          <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} />
+          <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} depth={baseDepth} />
         )}
       </SortableContext>
     )
@@ -483,6 +479,7 @@ export default function App() {
         sensors={dragAndDrop.sensors}
         collisionDetection={dragAndDrop.collisionDetection}
         onDragStart={dragAndDrop.onDragStart}
+        onDragMove={dragAndDrop.onDragMove}
         onDragOver={dragAndDrop.onDragOver}
         onDragCancel={dragAndDrop.onDragCancel}
         onDragEnd={dragAndDrop.onDragEnd}
@@ -533,7 +530,6 @@ export default function App() {
           </div>
         )}
 
-        <RootPromotionDropTarget visible={dragAndDrop.canPromoteActiveTaskToRoot} />
         {renderNodes(taskTree, ROOT_PARENT)}
       </main>
       <DragOverlay dropAnimation={null}>
