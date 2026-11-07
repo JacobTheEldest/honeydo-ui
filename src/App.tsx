@@ -388,6 +388,10 @@ export default function App() {
           const isActive = dragAndDrop.activeTaskId === node.id
           const subtreeIsDragging = ancestorDragging || isActive
           const childDropPreview = drop?.mode === 'child' && drop.parentId === node.id
+          // An open composer placed under this node needs its child group
+          // rendered even when the node has no children (e.g. "Add subtask"
+          // on a leaf) or is collapsed, exactly like the child drop preview.
+          const childComposerOpen = composerState.open && placement.parentId === node.id
           return (
             <Fragment key={`${parentScope}:${node.id}`}>
               {dropIndex === index && renderDropPreview()}
@@ -413,14 +417,14 @@ export default function App() {
                 hideDraggedSource={dragAndDrop.dropPreview !== null && (isActive || ancestorDragging)}
                 parentContext={node.parentContext}
               />
-              {!isCollapsed && (node.children.length > 0 || childDropPreview) &&
+              {!isCollapsed && (node.children.length > 0 || childDropPreview || childComposerOpen) &&
                 renderNodes(node.children, node.id, subtreeIsDragging, node.depth + 1)}
-              {isCollapsed && childDropPreview && renderNodes([], node.id, subtreeIsDragging, node.depth + 1)}
+              {isCollapsed && (childDropPreview || childComposerOpen) && renderNodes([], node.id, subtreeIsDragging, node.depth + 1)}
             </Fragment>
           )
         })}
         {dropIndex === visible.length && dropIndex !== 0 && renderDropPreview()}
-        {placementMatches && insertionIndex === visible.length && (
+        {placementMatches && insertionIndex === visible.length && insertionIndex !== 0 && (
           <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} depth={baseDepth} />
         )}
       </SortableContext>

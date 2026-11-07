@@ -470,6 +470,18 @@ test('the composer uses the simulated split preview when being placed', async ({
   expect(writes).toEqual([])
 })
 
+test('Add subtask from a leaf task menu opens an indented composer under that task', async ({ page }) => {
+  await page.goto('/')
+  const leaf = page.locator('[data-task-id="5"]')
+  await leaf.getByRole('button', { name: 'Task actions' }).click()
+  await leaf.getByRole('menuitem', { name: 'Add subtask' }).click()
+
+  const composer = page.locator('[data-task-composer]')
+  await expect(composer).toBeVisible()
+  await expect(composer).toHaveAttribute('data-composer-depth', '1')
+  await expect(composer.getByRole('textbox', { name: 'New task title' })).toBeFocused()
+})
+
 test('the left half of the simulated slot promotes a task as a sibling of the row below', async ({ page, request }) => {
   await page.goto('/')
   const handle = page.locator('[data-task-id="11"] [data-drag-handle]')
