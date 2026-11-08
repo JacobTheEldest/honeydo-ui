@@ -7,7 +7,6 @@ interface TaskSubtreePreviewProps {
   baseDepth?: number
   placeholder?: boolean
   dropMode?: 'sibling' | 'child'
-  siblingAnchor?: 'above' | 'below'
 }
 
 /** Rendered either as the pointer-following overlay or as the in-list drop destination. */
@@ -17,7 +16,6 @@ export default function TaskSubtreePreview({
   baseDepth = 0,
   placeholder = false,
   dropMode,
-  siblingAnchor = 'below',
 }: TaskSubtreePreviewProps) {
   const renderNode = (current: TaskTreeNode, relativeDepth: number) => {
     const isCollapsed = collapsed.has(current.id)
@@ -58,24 +56,20 @@ export default function TaskSubtreePreview({
             <div data-drop-preview-halves className="pointer-events-none absolute inset-0 z-20 grid grid-cols-2" aria-hidden="true">
               <div
                 data-drop-preview-half="sibling"
-                className={`flex items-center justify-center border-r border-honey/50 px-1 text-center text-[10px] font-semibold uppercase tracking-wide ${
+                className={`border-r border-honey/50 ${
                   dropMode === 'sibling'
-                    ? 'bg-honey/55 text-amber-950 dark:text-amber-100'
-                    : 'bg-gray-100/40 text-gray-500 dark:bg-gray-900/30 dark:text-gray-300'
+                    ? 'bg-honey/55 dark:bg-honey/50'
+                    : 'bg-gray-100/40 dark:bg-gray-900/30'
                 }`}
-              >
-                Sibling of {siblingAnchor}
-              </div>
+              />
               <div
                 data-drop-preview-half="child"
-                className={`flex items-center justify-center px-1 text-center text-[10px] font-semibold uppercase tracking-wide ${
+                className={`${
                   dropMode === 'child'
-                    ? 'bg-honey/55 text-amber-950 dark:text-amber-100'
-                    : 'bg-gray-100/40 text-gray-500 dark:bg-gray-900/30 dark:text-gray-300'
+                    ? 'bg-honey/55 dark:bg-honey/50'
+                    : 'bg-gray-100/40 dark:bg-gray-900/30'
                 }`}
-              >
-                Child of above
-              </div>
+              />
             </div>
           )}
         </div>

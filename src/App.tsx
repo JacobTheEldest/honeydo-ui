@@ -358,10 +358,10 @@ export default function App() {
     const insertionIndex = beforeIndex >= 0 ? beforeIndex : afterIndex >= 0 ? afterIndex + 1 : 0
     const drop = dragAndDrop.dropPreview
     const dropMatches = drop !== null && drop.parentId === parentId && dragPreviewNode !== null
-    const requestedDropIndex = drop?.beforeTaskId === null ? visible.length : visible.findIndex((node) => node.id === drop?.beforeTaskId)
-    const dropIndex = dropMatches
-      ? requestedDropIndex >= 0 ? requestedDropIndex : visible.length
-      : -1
+    const dropBeforeIndex = drop?.beforeTaskId == null ? -1 : visible.findIndex((node) => node.id === drop.beforeTaskId)
+    const dropAfterIndex = drop?.afterTaskId == null ? -1 : visible.findIndex((node) => node.id === drop.afterTaskId)
+    const requestedDropIndex = dropBeforeIndex >= 0 ? dropBeforeIndex : dropAfterIndex >= 0 ? dropAfterIndex + 1 : 0
+    const dropIndex = dropMatches ? requestedDropIndex : -1
     if (visible.length === 0 && !placementMatches && !dropMatches) return null
     const renderDropPreview = () => dropMatches && drop && dragPreviewNode ? (
       <TaskSubtreePreview
@@ -370,7 +370,6 @@ export default function App() {
         baseDepth={drop.baseDepth}
         placeholder
         dropMode={drop.mode}
-        siblingAnchor={drop.beforeTaskId === null ? 'above' : 'below'}
       />
     ) : null
     return (
@@ -379,7 +378,7 @@ export default function App() {
         items={visible.map((n) => encodeGroupItemId(parentScope, n.id))}
         strategy={verticalListSortingStrategy}
       >
-        {visible.length === 0 && dropIndex === 0 && renderDropPreview()}
+        {dropIndex === 0 && renderDropPreview()}
         {placementMatches && insertionIndex === 0 && (
           <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} depth={baseDepth} />
         )}
@@ -394,7 +393,7 @@ export default function App() {
           const childComposerOpen = composerState.open && placement.parentId === node.id
           return (
             <Fragment key={`${parentScope}:${node.id}`}>
-              {dropIndex === index && renderDropPreview()}
+              {dropIndex === index && index > 0 && renderDropPreview()}
               {placementMatches && insertionIndex === index && index > 0 && (
                 <TaskComposer state={composerState} dispatch={composerDispatch} onCreate={handleCreateTask} depth={baseDepth} />
               )}
@@ -414,7 +413,7 @@ export default function App() {
                 onMenuOpenChange={handleMenuOpenChange}
                 showCompleted={showCompleted}
                 isInDraggedSubtree={ancestorDragging && !isActive}
-                hideDraggedSource={dragAndDrop.dropPreview !== null && (isActive || ancestorDragging)}
+                hideDraggedSource={dragAndDrop.activeTaskId !== null && (isActive || ancestorDragging)}
                 parentContext={node.parentContext}
               />
               {!isCollapsed && (node.children.length > 0 || childDropPreview || childComposerOpen) &&

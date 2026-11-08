@@ -165,9 +165,10 @@ export default function TaskItem({
       ref={setNodeRef}
       data-task-id={task.id}
       data-sortable-id={sortableId}
-      style={{ ...dndStyle, paddingLeft: indentPx }}
+      style={{ ...dndStyle, paddingLeft: indentPx, height: hideDraggedSource ? 0 : undefined }}
       className={`
         relative overflow-visible
+        ${hideDraggedSource ? 'overflow-hidden' : ''}
         ${menuOpen ? 'z-50' : ''}
         ${task.done && !showCompleted ? 'hidden' : ''}
       `}

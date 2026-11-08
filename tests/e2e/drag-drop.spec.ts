@@ -22,7 +22,12 @@ async function dragHandleTo(
   if (activeTask) {
     const activeRow = activeTask.locator(':scope > div').nth(1)
     const preview = page.locator('[data-drag-preview]')
-    await expect(activeRow).toHaveCSS('opacity', '0.5')
+    await expect(activeRow).toHaveCSS('opacity', '0')
+    await expect(activeTask).toHaveJSProperty('offsetHeight', 0)
+    await expect(page.locator('[data-drop-preview]')).toBeVisible()
+    const halves = page.locator('[data-drop-preview-halves]')
+    await expect(halves.locator('[data-drop-preview-half="sibling"]')).toBeEmpty()
+    await expect(halves.locator('[data-drop-preview-half="child"]')).toBeEmpty()
     await expect(preview).toBeVisible()
     const initialPreviewBox = await preview.boundingBox()
     expect(initialPreviewBox, 'drag preview should be measurable').not.toBeNull()
@@ -43,8 +48,9 @@ async function dragHandleTo(
       const drift = Math.abs(actualCenterY - expectedCenterY)
       expect(drift, `drag preview drifted at step ${step}: actualY=${actualCenterY}, expectedY=${expectedCenterY}, pointerY=${pointerY}`)
         .toBeLessThan(20)
-      const hasDropDestination = await page.locator('[data-drop-preview]').count() > 0
-      await expect(activeRow).toHaveCSS('opacity', hasDropDestination ? '0' : '0.5')
+      // The grabbed row never leaves an empty space, even while the pointer
+      // crosses a region with no valid destination preview.
+      await expect(activeRow).toHaveCSS('opacity', '0')
     }
   } else {
     await page.mouse.move(target.x, target.y, { steps: 12 })
@@ -213,7 +219,9 @@ test('touch-dragging a handle does not swipe or pull-to-refresh and can nest the
     await page.waitForTimeout(100)
     const activeRow = page.locator('[data-task-id="2"] > div').nth(1)
     const preview = page.locator('[data-drag-preview]')
-    await expect(activeRow).toHaveCSS('opacity', '0.5')
+    await expect(activeRow).toHaveCSS('opacity', '0')
+    await expect(page.locator('[data-task-id="2"]')).toHaveJSProperty('offsetHeight', 0)
+    await expect(page.locator('[data-drop-preview]')).toBeVisible()
     await expect(preview).toBeVisible()
     const initialPreviewBox = await preview.boundingBox()
     expect(initialPreviewBox).not.toBeNull()
@@ -232,8 +240,9 @@ test('touch-dragging a handle does not swipe or pull-to-refresh and can nest the
       const expectedCenterY = y + previewCenterOffset
       expect(Math.abs(previewBox.y + previewBox.height / 2 - expectedCenterY), `touch preview drifted at step ${step}`)
         .toBeLessThan(20)
-      const hasDropDestination = await page.locator('[data-drop-preview]').count() > 0
-      await expect(activeRow).toHaveCSS('opacity', hasDropDestination ? '0' : '0.5')
+      // The grabbed row never leaves an empty space, even while the pointer
+      // crosses a region with no valid destination preview.
+      await expect(activeRow).toHaveCSS('opacity', '0')
     }
 
     const nestingPlaceholder = page.locator('[data-drop-preview]')

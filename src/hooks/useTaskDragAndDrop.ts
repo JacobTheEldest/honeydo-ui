@@ -120,6 +120,22 @@ export function useTaskDragAndDrop({
   const collisionDetection = useCallback<CollisionDetection>((args) => {
     if (String(args.active.id) === 'task-composer') return pointerWithin(args)
 
+    // The active subtree can never anchor its own drop: filter it out so the
+    // destination preview survives while the pointer crosses the collapsed
+    // source's old space.
+    const excluded = new Set<number>()
+    const active = decodeGroupItemId(String(args.active.id))
+    const activeNodeForCollision = active ? findNode(taskTree, active.taskId) : null
+    const excludeSubtree = (node: TaskTreeNode) => {
+      excluded.add(node.id)
+      node.children.forEach(excludeSubtree)
+    }
+    if (activeNodeForCollision) excludeSubtree(activeNodeForCollision)
+    const isExcluded = (id: string | number) => {
+      const decoded = decodeGroupItemId(String(id))
+      return decoded !== null && excluded.has(decoded.taskId)
+    }
+
     // Use drag-start row geometry so the insertion gap is stable even as
     // sortable transforms animate siblings around the moving preview.
     const startGeometry = args.droppableContainers.map((container) => {
@@ -127,24 +143,26 @@ export function useTaskDragAndDrop({
       return rect ? { ...container, rect: { current: rect } } : container
     })
     const stableHits = pointerWithin({ ...args, droppableContainers: startGeometry })
-    const active = decodeGroupItemId(String(args.active.id))
-    if (!active) return stableHits.length > 0 ? stableHits : closestCenter(args)
+      .filter((collision) => !isExcluded(collision.id))
+    if (!active) return stableHits.length > 0 ? stableHits : pointerWithin(args)
 
     const isSameScope = (id: string | number) => decodeGroupItemId(String(id))?.parent === active.parent
     const sameInitialHits = stableHits.filter((collision) => isSameScope(collision.id))
     if (sameInitialHits.length > 0) return sameInitialHits
     if (stableHits.length > 0) return stableHits
 
-    const currentHits = pointerWithin(args)
+    const currentHits = pointerWithin(args).filter((collision) => !isExcluded(collision.id))
     const sameCurrentHits = currentHits.filter((collision) => isSameScope(collision.id))
     if (sameCurrentHits.length > 0) return sameCurrentHits
     if (currentHits.length > 0) return currentHits
 
-    const sameScopeContainers = args.droppableContainers.filter((container) => isSameScope(container.id))
-    return sameScopeContainers.length > 0
-      ? closestCenter({ ...args, droppableContainers: sameScopeContainers })
-      : []
-  }, [])
+    // Pointer is over the collapsed source's old space: fall back to the
+    // nearest remaining row so the preview never disappears mid-drag.
+    const candidates = args.droppableContainers.filter((container) => !isExcluded(container.id))
+    const sameScopeContainers = candidates.filter((container) => isSameScope(container.id))
+    if (sameScopeContainers.length > 0) return closestCenter({ ...args, droppableContainers: sameScopeContainers })
+    return candidates.length > 0 ? closestCenter({ ...args, droppableContainers: candidates }) : []
+  }, [taskTree])
 
   const updateDropPreview = useCallback((event: DragMoveEvent | DragOverEvent) => {
     const setPreview = (next: DropPreview | null) => {
@@ -296,7 +314,23 @@ export function useTaskDragAndDrop({
     })
     const decoded = decodeGroupItemId(String(event.active.id))
     setActiveTaskId(decoded?.taskId ?? null)
-  }, [])
+    if (decoded) {
+      const group = groupBySortableId.get(String(event.active.id))
+      const node = findNode(taskTree, decoded.taskId)
+      const index = group?.items.indexOf(decoded.taskId) ?? -1
+      if (group && node && index >= 0) {
+        const initialPreview: DropPreview = {
+          mode: 'sibling',
+          parentId: group.parent === ROOT_PARENT ? null : group.parent,
+          beforeTaskId: group.items[index + 1] ?? null,
+          afterTaskId: group.items[index - 1] ?? null,
+          baseDepth: node.depth,
+        }
+        dropPreviewRef.current = initialPreview
+        setDropPreview(initialPreview)
+      }
+    }
+  }, [groupBySortableId, taskTree])
 
   const handleDragCancel = useCallback((_event: DragCancelEvent) => {
     if (expansionTimerRef.current) clearTimeout(expansionTimerRef.current)
