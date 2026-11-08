@@ -28,18 +28,10 @@ export default function TaskSubtreePreview({
         data-drop-preview-row={placeholder ? current.id : undefined}
         className={placeholder && relativeDepth === 0 ? 'relative' : undefined}
       >
-        {placeholder && relativeDepth === 0 && (
-          <span
-            data-drop-preview-guide
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-honey/70"
-            style={{ left: `${8 + baseDepth * 16}px` }}
-          />
-        )}
         <div
           className={`relative flex items-center gap-2 border-b px-4 py-3 last:border-b-0 ${
             placeholder
-              ? 'border-gray-200 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400'
+              ? 'border-gray-200 bg-white text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
               : 'border-gray-100 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
           }`}
           style={{ paddingLeft: `${16 + (baseDepth + relativeDepth) * 16}px` }}
@@ -52,26 +44,6 @@ export default function TaskSubtreePreview({
           <span className={`min-w-0 flex-1 truncate ${current.done ? 'text-gray-400 line-through dark:text-gray-500' : ''}`}>
             {current.title}
           </span>
-          {placeholder && relativeDepth === 0 && dropMode && (
-            <div data-drop-preview-halves className="pointer-events-none absolute inset-0 z-20 grid grid-cols-2" aria-hidden="true">
-              <div
-                data-drop-preview-half="sibling"
-                className={`border-r border-honey/50 ${
-                  dropMode === 'sibling'
-                    ? 'bg-honey/55 dark:bg-honey/50'
-                    : 'bg-gray-100/40 dark:bg-gray-900/30'
-                }`}
-              />
-              <div
-                data-drop-preview-half="child"
-                className={`${
-                  dropMode === 'child'
-                    ? 'bg-honey/55 dark:bg-honey/50'
-                    : 'bg-gray-100/40 dark:bg-gray-900/30'
-                }`}
-              />
-            </div>
-          )}
         </div>
         {!isCollapsed && current.children.map((child) => renderNode(child, relativeDepth + 1))}
       </div>

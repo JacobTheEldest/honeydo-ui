@@ -87,6 +87,7 @@ export function useTaskDragAndDrop({
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null)
   const [isComposerDragging, setIsComposerDragging] = useState(false)
   const [dropPreview, setDropPreview] = useState<DropPreview | null>(null)
+  const [dropPreviewVisible, setDropPreviewVisible] = useState(false)
   const dragStartRectsRef = useRef<Map<string, DOMRectReadOnly>>(new Map())
   const dropPreviewRef = useRef<DropPreview | null>(null)
   const expansionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -306,6 +307,7 @@ export function useTaskDragAndDrop({
     dragStartRectsRef.current.clear()
     dropPreviewRef.current = null
     setDropPreview(null)
+    setDropPreviewVisible(false)
     const isComposerDrag = String(event.active.id) === 'task-composer'
     setIsComposerDragging(isComposerDrag)
     document.querySelectorAll<HTMLElement>('[data-sortable-id]').forEach((element) => {
@@ -339,16 +341,19 @@ export function useTaskDragAndDrop({
     dragStartRectsRef.current.clear()
     dropPreviewRef.current = null
     setDropPreview(null)
+    setDropPreviewVisible(false)
     setIsComposerDragging(false)
     setActiveTaskId(null)
   }, [])
 
   const handleDragMove = useCallback((event: DragMoveEvent) => {
+    setDropPreviewVisible(true)
     updateDropPreview(event)
     updateExpansionTarget()
   }, [updateDropPreview, updateExpansionTarget])
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
+    setDropPreviewVisible(true)
     updateDropPreview(event)
     updateExpansionTarget()
   }, [updateDropPreview, updateExpansionTarget])
@@ -362,6 +367,7 @@ export function useTaskDragAndDrop({
     dragStartRectsRef.current.clear()
     dropPreviewRef.current = null
     setDropPreview(null)
+    setDropPreviewVisible(false)
     setIsComposerDragging(false)
 
     if (activeId === 'task-composer') {
@@ -517,6 +523,7 @@ export function useTaskDragAndDrop({
     activeNode,
     isComposerDragging,
     dropPreview,
+    dropPreviewVisible,
     sensors,
     collisionDetection,
     onDragStart: handleDragStart,
