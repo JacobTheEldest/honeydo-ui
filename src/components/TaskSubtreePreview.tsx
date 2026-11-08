@@ -31,7 +31,7 @@ export default function TaskSubtreePreview({
         <div
           className={`relative flex items-center gap-2 border-b px-4 py-3 last:border-b-0 ${
             placeholder
-              ? 'border-gray-200 bg-white text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
+              ? 'border-gray-100 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
               : 'border-gray-100 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
           }`}
           style={{ paddingLeft: `${16 + (baseDepth + relativeDepth) * 16}px` }}
