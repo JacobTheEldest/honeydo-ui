@@ -26,6 +26,7 @@ interface TaskItemProps {
   showCompleted: boolean
   isInDraggedSubtree: boolean
   hideDraggedSource: boolean
+  dragActive?: boolean
   parentContext?: string
 }
 
@@ -46,6 +47,7 @@ export default function TaskItem({
   showCompleted,
   isInDraggedSubtree,
   hideDraggedSource,
+  dragActive = false,
   parentContext,
 }: TaskItemProps) {
   const [editing, setEditing] = useState(false)
@@ -69,7 +71,7 @@ export default function TaskItem({
   // The DragOverlay follows the pointer; keep the original row as a stationary
   // source marker so sortable transforms cannot make it jump between slots.
   const dndStyle = {
-    transform: isDragging ? undefined : CSS.Transform.toString(transform),
+    transform: isDragging || dragActive ? undefined : CSS.Transform.toString(transform),
   }
 
   // Swipe gesture for mobile complete

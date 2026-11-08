@@ -414,6 +414,7 @@ export default function App() {
                 showCompleted={showCompleted}
                 isInDraggedSubtree={ancestorDragging && !isActive}
                 hideDraggedSource={dragAndDrop.activeTaskId !== null && (isActive || ancestorDragging)}
+                dragActive={dragAndDrop.activeTaskId !== null}
                 parentContext={node.parentContext}
               />
               {!isCollapsed && (node.children.length > 0 || childDropPreview || childComposerOpen) &&
