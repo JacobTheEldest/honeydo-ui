@@ -20,12 +20,14 @@ export default function TaskSubtreePreview({
   const renderNode = (current: TaskTreeNode, relativeDepth: number) => {
     const isCollapsed = collapsed.has(current.id)
     const hasChildren = current.children.length > 0
+    const indentPx = (baseDepth + relativeDepth) * 16
 
     return (
       <div
         key={current.id}
         data-drag-preview-row={current.id}
         data-drop-preview-row={placeholder ? current.id : undefined}
+        style={{ paddingLeft: indentPx }}
         className={placeholder && relativeDepth === 0 ? 'relative' : undefined}
       >
         <div
@@ -34,7 +36,6 @@ export default function TaskSubtreePreview({
               ? 'border-gray-100 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
               : 'border-gray-100 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
           }`}
-          style={{ paddingLeft: `${16 + (baseDepth + relativeDepth) * 16}px` }}
         >
           <span className="flex w-4 shrink-0 items-center justify-center text-gray-400 dark:text-gray-500" aria-hidden="true">
             {hasChildren ? (
