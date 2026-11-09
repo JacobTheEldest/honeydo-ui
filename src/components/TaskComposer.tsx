@@ -17,7 +17,7 @@ interface TaskComposerProps {
 
 /** A transient, draggable insertion row; it is persisted only on submit. */
 export default function TaskComposer({ state, dispatch, onCreate, depth = 0 }: TaskComposerProps) {
-  const containerRef = useRef<HTMLFormElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const [submitting, setSubmitting] = useState(false)
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -86,58 +86,61 @@ export default function TaskComposer({ state, dispatch, onCreate, depth = 0 }: T
   }
 
   return (
-    <form
+    <div
       ref={(node) => {
         containerRef.current = node
         setNodeRef(node)
       }}
       data-task-composer
       data-composer-depth={depth}
-      style={{ ...dragStyle, opacity: isDragging ? 0.55 : 1, paddingLeft: 16 + depth * 16 }}
-      onSubmit={handleSubmit}
-      className="relative flex items-center gap-2 px-4 py-3 bg-honey-light dark:bg-honey/10 border-y-2 border-honey/60 dark:border-honey/40 shadow-sm"
+      style={{ ...dragStyle, opacity: isDragging ? 0.55 : 1, paddingLeft: depth * 16 }}
     >
-      <span aria-hidden="true" className="w-4 shrink-0" />
-      <button
-        type="button"
-        {...attributes}
-        {...listeners}
-        data-drag-handle
-        aria-label="Drag to place new task"
-        className="text-gray-300 dark:text-gray-600 cursor-grab active:cursor-grabbing shrink-0 p-1 touch-none"
+      <form
+        onSubmit={handleSubmit}
+        className="relative flex items-center gap-2 px-4 py-3 bg-honey-light dark:bg-honey/10 border-y-2 border-honey/60 dark:border-honey/40 shadow-sm"
       >
-        <GripVertical className="w-5 h-5" />
-      </button>
-      <div className="flex-1 min-w-0">
-        <input
-          ref={inputRef}
-          type="text"
-          value={state.title}
-          onChange={(event) => dispatch({ type: 'titleChanged', title: event.target.value })}
-          onKeyDown={handleKeyDown}
-          placeholder="New task..."
-          aria-label="New task title"
-          className="w-full px-2 py-1 text-base border border-honey rounded focus:outline-none focus:ring-2 focus:ring-honey/50 dark:bg-gray-700 dark:text-gray-200 dark:border-honey-dark"
-        />
-        {state.error && (
-          <p role="alert" className="mt-1 text-xs text-red-500 dark:text-red-400 truncate">
-            {state.error}
-          </p>
-        )}
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
+        <span aria-hidden="true" className="w-4 shrink-0" />
         <button
-          type="submit"
-          disabled={submitting}
-          aria-label="Add task"
-          className="w-8 h-8 rounded-full bg-honey text-white flex items-center justify-center hover:bg-honey-dark disabled:opacity-50"
+          type="button"
+          {...attributes}
+          {...listeners}
+          data-drag-handle
+          aria-label="Drag to place new task"
+          className="text-gray-300 dark:text-gray-600 cursor-grab active:cursor-grabbing shrink-0 p-1 touch-none"
         >
-          <Plus className="w-4 h-4" />
+          <GripVertical className="w-5 h-5" />
         </button>
-        {/* Inert spacer mirroring TaskItem's second action slot so the input
-            matches the rename field's width exactly. */}
-        <span aria-hidden="true" className="w-8 h-8 shrink-0" />
-      </div>
-    </form>
+        <div className="flex-1 min-w-0">
+          <input
+            ref={inputRef}
+            type="text"
+            value={state.title}
+            onChange={(event) => dispatch({ type: 'titleChanged', title: event.target.value })}
+            onKeyDown={handleKeyDown}
+            placeholder="New task..."
+            aria-label="New task title"
+            className="w-full px-2 py-1 text-base border border-honey rounded focus:outline-none focus:ring-2 focus:ring-honey/50 dark:bg-gray-700 dark:text-gray-200 dark:border-honey-dark"
+          />
+          {state.error && (
+            <p role="alert" className="mt-1 text-xs text-red-500 dark:text-red-400 truncate">
+              {state.error}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="submit"
+            disabled={submitting}
+            aria-label="Add task"
+            className="w-8 h-8 rounded-full bg-honey text-white flex items-center justify-center hover:bg-honey-dark disabled:opacity-50"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+          {/* Inert spacer mirroring TaskItem's second action slot so the input
+              matches the rename field's width exactly. */}
+          <span aria-hidden="true" className="w-8 h-8 shrink-0" />
+        </div>
+      </form>
+    </div>
   )
 }

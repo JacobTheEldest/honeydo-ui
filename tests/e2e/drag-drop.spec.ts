@@ -464,7 +464,9 @@ test('the composer uses the simulated split preview when being placed', async ({
   await page.mouse.up()
   await expect(composer).toBeVisible()
   await expect(composer).toHaveAttribute('data-composer-depth', '1')
-  await expect(composer).toHaveCSS('padding-left', '32px')
+  // The composer wrapper indents by depth * 16 (TaskItem convention), so the
+  // honey bar starts where a depth-1 row block starts and keeps its own px-4.
+  await expect(composer).toHaveCSS('padding-left', '16px')
   expect(writes).toEqual([])
 })
 
@@ -478,6 +480,59 @@ test('Add subtask from a leaf task menu opens an indented composer under that ta
   await expect(composer).toBeVisible()
   await expect(composer).toHaveAttribute('data-composer-depth', '1')
   await expect(composer.getByRole('textbox', { name: 'New task title' })).toBeFocused()
+  // The whole composer row is indented to the level the subtask will appear
+  // at: wrapper padding-left = depth * 16 (TaskItem convention), so the honey
+  // bar starts exactly where a real depth-1 row block starts.
+  await expect(composer).toHaveCSS('padding-left', '16px')
+  const barBox = await composer.locator('form').boundingBox()
+  const depthOneRowBox = await page
+    .locator('[data-task-id="11"]')
+    .locator(':scope > div')
+    .nth(1)
+    .boundingBox()
+  expect(barBox, 'composer bar should be measurable').not.toBeNull()
+  expect(depthOneRowBox, 'an existing depth-1 row should be measurable').not.toBeNull()
+  if (!barBox || !depthOneRowBox) throw new Error('composer bar or depth-1 row has no bounding box')
+  expect(barBox.x).toBeCloseTo(depthOneRowBox.x, 0)
+})
+
+test('Add subtask composer is indented to the level where the created subtask appears', async ({ page, request }) => {
+  await page.goto('/')
+  const parent = page.locator('[data-task-id="12"]')
+  await parent.getByRole('button', { name: 'Task actions' }).click()
+  await parent.getByRole('menuitem', { name: 'Add subtask' }).click()
+
+  const composer = page.locator('[data-task-composer]')
+  await expect(composer).toBeVisible()
+  await expect(composer).toHaveAttribute('data-composer-depth', '2')
+  await expect(composer).toHaveCSS('padding-left', '32px')
+  const barBox = await composer.locator('form').boundingBox()
+  expect(barBox, 'composer bar should be measurable').not.toBeNull()
+  if (!barBox) throw new Error('composer bar has no bounding box')
+
+  await composer.getByRole('textbox', { name: 'New task title' }).fill('Second load of laundry')
+  await composer.getByRole('button', { name: 'Add task' }).click()
+
+  // The created subtask must render exactly where its composer previewed it.
+  const created = page.locator('[data-task-id="100"]')
+  await expect(created).toBeVisible()
+  const createdRowBox = await created.locator(':scope > div').nth(1).boundingBox()
+  expect(createdRowBox, 'created subtask row should be measurable').not.toBeNull()
+  if (!createdRowBox) throw new Error('created subtask row has no bounding box')
+  expect(createdRowBox.x).toBeCloseTo(barBox.x, 0)
+  await expect(created).toHaveAttribute('style', /padding-left:\s*32px/)
+
+  // Server-side parent link proves the created task really sits at that level,
+  // and the indent survives a reload.
+  await expect
+    .poll(async () => {
+      const response = await request.get('/api/v1/test-state')
+      const state = (await response.json()) as { parents: Record<string, number> }
+      return state.parents['100']
+    })
+    .toBe(12)
+  await page.reload()
+  await expect(page.locator('[data-task-id="100"]')).toHaveAttribute('style', /padding-left:\s*32px/)
 })
 
 test('the left third of the simulated slot promotes a task as a sibling of the row below', async ({ page, request }) => {
