@@ -3,6 +3,12 @@ import type { VikunjaTask } from '../types/vikunja.ts'
 const BASE_DATE = new Date('2100-01-01T00:00:00Z').getTime()
 const LEGACY_BASE_DATE = new Date('2000-01-01T00:00:00Z').getTime()
 const LEGACY_ORDERING_CUTOFF = new Date('2050-01-01T00:00:00Z').getTime()
+// Vikunja serializes an unset due_date as Go's zero value (0001-01-01T00:00:00Z),
+// which is not an ordering date. Any realistic ordering position under the
+// 2000 epoch stays within a few years of 2000-01-01, so a 1990 floor cleanly
+// separates genuine ordering metadata from the zero-value sentinel and other
+// ancient non-ordering timestamps without ever excluding a real position.
+const LEGACY_ORDERING_FLOOR = new Date('1990-01-01T00:00:00Z').getTime()
 const INTERVAL_MS = 60_000 // 60 seconds between positions
 
 /** Exact millisecond offset between the legacy (2000) and current (2100) ordering epochs. */
@@ -56,7 +62,11 @@ export function getTopPosition(): number {
 
 export function isLegacyOrderingDate(dueDate: string): boolean {
   const timestamp = new Date(dueDate).getTime()
-  return Number.isFinite(timestamp) && timestamp < LEGACY_ORDERING_CUTOFF
+  return (
+    Number.isFinite(timestamp) &&
+    timestamp >= LEGACY_ORDERING_FLOOR &&
+    timestamp < LEGACY_ORDERING_CUTOFF
+  )
 }
 
 /**

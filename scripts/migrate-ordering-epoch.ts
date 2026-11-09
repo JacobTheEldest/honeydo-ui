@@ -4,6 +4,7 @@ import {
   migrateLegacyDueDate,
   ORDERING_EPOCH,
 } from '../src/utils/ordering.ts'
+import { buildTree, flattenVisible } from '../src/utils/taskTree.ts'
 
 /**
  * One-time migration for the ordering due_date epoch shift (2000 -> 2100).
@@ -139,27 +140,40 @@ async function main(): Promise<void> {
     }
   }
 
-  const seed = Array.from(tasks.values())
-  const honeyDoIds = seed
+  const allTasks = Array.from(tasks.values())
+  const honeyDoIds = allTasks
     .filter((task) => task.labels?.some((label) => label.title === HONEYDO_LABEL))
     .map((task) => task.id)
+
+  // Fetch details for every Honey-Do-labeled task so we get related_tasks
+  // (parent/subtask links) needed to discover the full forest.
   const honeyDoDetails = await runWithConcurrency(honeyDoIds, DETAIL_CONCURRENCY, (id) =>
     fetchTaskDetail(id).catch(() => null)
   )
+  const labeledTasks: VikunjaTask[] = []
   for (const detail of honeyDoDetails) {
     if (!detail) continue
     const existing = tasks.get(detail.id)
-    tasks.set(detail.id, {
+    const merged = {
       ...existing,
       ...detail,
       labels: detail.labels?.length ? detail.labels : (existing?.labels ?? []),
-    })
+    }
+    tasks.set(detail.id, merged)
+    labeledTasks.push(merged)
   }
 
-  await collectSubtaskDetails(Array.from(tasks.values()), tasks)
+  // Walk down from the labeled tasks to collect all descendants (both labeled
+  // and unlabeled) that belong to the Honey-Do forest.
+  await collectSubtaskDetails(labeledTasks, tasks)
+
+  // buildTree reconstructs the exact forest rendered by the app; flattenVisible
+  // yields every task whose due_date is used for ordering.
+  const roots = buildTree(Array.from(tasks.values()), HONEYDO_LABEL)
+  const forest = flattenVisible(roots, new Set<number>())
 
   const updates: Array<{ id: number; due_date: string }> = []
-  for (const task of tasks.values()) {
+  for (const task of forest) {
     if (!task.due_date) continue
     if (!isLegacyOrderingDate(task.due_date)) continue
     updates.push({ id: task.id, due_date: migrateLegacyDueDate(task.due_date) })
