@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { VikunjaTask } from '../src/types/vikunja.ts'
 import { buildTree } from '../src/utils/taskTree.ts'
+import { positionToDueDate } from '../src/utils/ordering.ts'
 
-const orderDate = (minutes: number) => new Date(Date.UTC(2000, 0, 1, 0, minutes)).toISOString()
+const orderDate = positionToDueDate
 
 function makeTask(
   id: number,

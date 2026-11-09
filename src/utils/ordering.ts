@@ -1,7 +1,15 @@
 import type { VikunjaTask } from '../types/vikunja.ts'
 
-const BASE_DATE = new Date('2000-01-01T00:00:00Z').getTime()
+const BASE_DATE = new Date('2100-01-01T00:00:00Z').getTime()
+const LEGACY_BASE_DATE = new Date('2000-01-01T00:00:00Z').getTime()
+const LEGACY_ORDERING_CUTOFF = new Date('2050-01-01T00:00:00Z').getTime()
 const INTERVAL_MS = 60_000 // 60 seconds between positions
+
+/** Exact millisecond offset between the legacy (2000) and current (2100) ordering epochs. */
+export const ORDERING_EPOCH_DELTA_MS = BASE_DATE - LEGACY_BASE_DATE
+
+/** ISO timestamp of the current ordering epoch. */
+export const ORDERING_EPOCH = new Date(BASE_DATE).toISOString()
 
 export function positionToDueDate(position: number): string {
   const timestamp = BASE_DATE + position * INTERVAL_MS
@@ -44,6 +52,22 @@ export function rebalancePositions(count: number): number[] {
 
 export function getTopPosition(): number {
   return -1 // One interval before base
+}
+
+export function isLegacyOrderingDate(dueDate: string): boolean {
+  const timestamp = new Date(dueDate).getTime()
+  return Number.isFinite(timestamp) && timestamp < LEGACY_ORDERING_CUTOFF
+}
+
+/**
+ * Shift a legacy ordering due_date to the current epoch while preserving its
+ * relative position. Returns the input unchanged if it is not a parseable
+ * legacy ordering date.
+ */
+export function migrateLegacyDueDate(dueDate: string): string {
+  if (!isLegacyOrderingDate(dueDate)) return dueDate
+  const timestamp = new Date(dueDate).getTime()
+  return new Date(timestamp + ORDERING_EPOCH_DELTA_MS).toISOString()
 }
 
 export interface GroupRebalance {

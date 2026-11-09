@@ -3,6 +3,7 @@ import test from 'node:test'
 import type { VikunjaTask } from '../src/types/vikunja.ts'
 import type { TaskTreeNode } from '../src/utils/taskTree.ts'
 import { buildTree } from '../src/utils/taskTree.ts'
+import { positionToDueDate } from '../src/utils/ordering.ts'
 import {
   applyUnlabel,
   countDescendants,
@@ -13,7 +14,7 @@ import {
 } from '../src/utils/unlabel.ts'
 
 const HONEYDO = { id: 7, title: 'Honey-Do' }
-const orderDate = (minutes: number) => new Date(Date.UTC(2000, 0, 1, 0, minutes)).toISOString()
+const orderDate = positionToDueDate
 
 function makeNode(
   id: number,
