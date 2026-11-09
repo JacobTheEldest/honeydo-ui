@@ -238,48 +238,82 @@ export function useTaskDragAndDrop({
     const above = rows[gapIndex - 1] ?? null
     const below = rows[gapIndex] ?? null
     const listRect = document.querySelector<HTMLElement>('main')?.getBoundingClientRect()
-    const splitX = (listRect?.left ?? event.over.rect.left) + (listRect?.width ?? event.over.rect.width) / 2
+    const listLeft = listRect?.left ?? event.over.rect.left
+    const listWidth = listRect?.width ?? event.over.rect.width
+    const relX = Math.max(0, Math.min(listWidth, pointerX - listLeft))
+    const third = relX < listWidth / 3 ? 'left' : relX < (listWidth * 2) / 3 ? 'center' : 'right'
+
+    const findNextSiblingId = (node: TaskTreeNode): number | null => {
+      const parentId = node.related_tasks?.parenttask?.[0]?.id ?? null
+      const siblings = parentId === null ? taskTree : findNode(taskTree, parentId)?.children ?? []
+      const idx = siblings.findIndex((s) => s.id === node.id)
+      if (idx < 0) return null
+      for (let i = idx + 1; i < siblings.length; i++) {
+        if (!excludedIds.has(siblings[i].id)) return siblings[i].id
+      }
+      return null
+    }
 
     let nextPreview: DropPreview | null = null
-    if (pointerX < splitX) {
-      const anchor = below ?? above
-      if (!anchor) {
-        setPreview(null)
-        return
+    if (third === 'right') {
+      // child of above
+      if (!above || (activeNode && !canNestUnder(activeNode, above.taskId))) {
+        if (!above) {
+          nextPreview = { mode: 'sibling', parentId: null, beforeTaskId: null, afterTaskId: null, baseDepth: 0 }
+        } else {
+          setPreview(null)
+          return
+        }
+      } else {
+        const parent = findNode(taskTree, above.taskId)
+        if (!parent) { setPreview(null); return }
+        nextPreview = {
+          mode: 'child',
+          parentId: above.taskId,
+          beforeTaskId: parent.children[0]?.id ?? null,
+          afterTaskId: null,
+          baseDepth: above.node.depth + 1,
+        }
       }
-      const parentId = anchor.parent === ROOT_PARENT ? null : anchor.parent
-      const oldParentIds = activeNode?.related_tasks?.parenttask?.map((parent) => parent.id) ?? []
-      const oldParentId = oldParentIds[0] ?? null
-      if (activeNode && parentId === null && oldParentId !== null &&
-        (oldParentIds.length !== 1 || !canPromoteToRoot(activeNode, byId.get(oldParentId), HONEYDO_LABEL) || honeyDoLabelId === null)) {
-        setPreview(null)
-        return
-      }
-      const beforeTaskId = below?.taskId ?? null
-      const afterTaskId = below ? null : (above?.taskId ?? null)
-      nextPreview = {
-        mode: 'sibling',
-        parentId,
-        beforeTaskId,
-        afterTaskId,
-        baseDepth: below?.node.depth ?? above?.node.depth ?? 0,
+    } else if (third === 'center') {
+      // sibling of above
+      if (!above) {
+        nextPreview = { mode: 'sibling', parentId: null, beforeTaskId: taskTree[0]?.id ?? null, afterTaskId: null, baseDepth: 0 }
+      } else {
+        const parentId = above.parent === ROOT_PARENT ? null : above.parent
+        const oldParentIds = activeNode?.related_tasks?.parenttask?.map((p) => p.id) ?? []
+        const oldParentId = oldParentIds[0] ?? null
+        if (activeNode && parentId === null && oldParentId !== null &&
+          (oldParentIds.length !== 1 || !canPromoteToRoot(activeNode, byId.get(oldParentId), HONEYDO_LABEL) || honeyDoLabelId === null)) {
+          setPreview(null); return
+        }
+        nextPreview = {
+          mode: 'sibling',
+          parentId,
+          beforeTaskId: findNextSiblingId(above.node),
+          afterTaskId: above.taskId,
+          baseDepth: above.node.depth,
+        }
       }
     } else {
-      if (!above || (activeNode && !canNestUnder(activeNode, above.taskId))) {
-        setPreview(null)
-        return
-      }
-      const parent = findNode(taskTree, above.taskId)
-      if (!parent) {
-        setPreview(null)
-        return
-      }
-      nextPreview = {
-        mode: 'child',
-        parentId: above.taskId,
-        beforeTaskId: parent.children[0]?.id ?? null,
-        afterTaskId: null,
-        baseDepth: above.node.depth + 1,
+      // left: sibling of below
+      if (!below) {
+        nextPreview = { mode: 'sibling', parentId: null, beforeTaskId: null, afterTaskId: taskTree[taskTree.length - 1]?.id ?? null, baseDepth: 0 }
+      } else {
+        const parentId = below.parent === ROOT_PARENT ? null : below.parent
+        const oldParentIds = activeNode?.related_tasks?.parenttask?.map((p) => p.id) ?? []
+        const oldParentId = oldParentIds[0] ?? null
+        if (activeNode && parentId === null && oldParentId !== null &&
+          (oldParentIds.length !== 1 || !canPromoteToRoot(activeNode, byId.get(oldParentId), HONEYDO_LABEL) || honeyDoLabelId === null)) {
+          setPreview(null); return
+        }
+        nextPreview = {
+          mode: 'sibling',
+          parentId,
+          beforeTaskId: below.taskId,
+          afterTaskId: null,
+          baseDepth: below.node.depth,
+        }
       }
     }
     setPreview(nextPreview)

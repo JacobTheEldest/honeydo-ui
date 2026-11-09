@@ -322,8 +322,10 @@ test('dragging a root task down by one sibling persists exactly one position', a
   const targetRow = page.locator('[data-task-id="5"]')
   await expect(source).toBeVisible()
   const targetBox = await targetRow.boundingBox()
+  const listBox = await page.locator('main').boundingBox()
   expect(targetBox).not.toBeNull()
-  if (!targetBox) throw new Error('target row has no bounding box')
+  expect(listBox).not.toBeNull()
+  if (!targetBox || !listBox) throw new Error('target row has no bounding box')
 
   let holdUpdate = false
   let releaseUpdate!: () => void
@@ -342,7 +344,7 @@ test('dragging a root task down by one sibling persists exactly one position', a
   )
   holdUpdate = true
   await dragHandleTo(page, source, {
-    x: targetBox.x + targetBox.width * 0.4,
+    x: listBox.x + listBox.width * 0.15,
     y: targetBox.y + 2,
   }, page.locator('[data-task-id="1"]'), 'sibling')
   await updateRequestArrived
@@ -372,14 +374,16 @@ test('dragging a root task down by two siblings persists the full move after rel
   const targetRow = page.locator('[data-task-id="31"]')
   await expect(source).toBeVisible()
   const targetBox = await targetRow.boundingBox()
+  const listBox = await page.locator('main').boundingBox()
   expect(targetBox).not.toBeNull()
-  if (!targetBox) throw new Error('target row has no bounding box')
+  expect(listBox).not.toBeNull()
+  if (!targetBox || !listBox) throw new Error('target row has no bounding box')
 
   const updateResponse = page.waitForResponse((response) =>
     response.request().method() === 'POST' && response.url().endsWith('/api/v1/tasks/1')
   )
   await dragHandleTo(page, source, {
-    x: targetBox.x + targetBox.width * 0.4,
+    x: listBox.x + listBox.width * 0.15,
     y: targetBox.y + 2,
   }, page.locator('[data-task-id="1"]'), 'sibling')
   expect((await updateResponse).ok()).toBe(true)
@@ -403,14 +407,16 @@ test('dragging a root task two siblings up persists the full move after reload',
   const targetRow = page.locator('[data-task-id="1"]')
   await expect(source).toBeVisible()
   const targetBox = await targetRow.boundingBox()
+  const listBox = await page.locator('main').boundingBox()
   expect(targetBox).not.toBeNull()
-  if (!targetBox) throw new Error('target row has no bounding box')
+  expect(listBox).not.toBeNull()
+  if (!targetBox || !listBox) throw new Error('target row has no bounding box')
 
   const updateResponse = page.waitForResponse((response) =>
     response.request().method() === 'POST' && response.url().endsWith('/api/v1/tasks/5')
   )
   await dragHandleTo(page, source, {
-    x: targetBox.x + targetBox.width * 0.4,
+    x: listBox.x + listBox.width * 0.15,
     y: targetBox.y + 2,
   }, page.locator('[data-task-id="5"]'), 'sibling')
   expect((await updateResponse).ok()).toBe(true)
@@ -474,7 +480,7 @@ test('Add subtask from a leaf task menu opens an indented composer under that ta
   await expect(composer.getByRole('textbox', { name: 'New task title' })).toBeFocused()
 })
 
-test('the left half of the simulated slot promotes a task as a sibling of the row below', async ({ page, request }) => {
+test('the left third of the simulated slot promotes a task as a sibling of the row below', async ({ page, request }) => {
   await page.goto('/')
   const handle = page.locator('[data-task-id="11"] [data-drag-handle]')
   const belowRow = page.locator('[data-task-id="2"]')
@@ -535,4 +541,51 @@ test('the left half of the simulated slot promotes a task as a sibling of the ro
   await expect(page.locator('[data-task-id="11"]')).toHaveAttribute('data-sortable-id', 'r::11')
   await page.reload()
   await expect(page.locator('[data-task-id="11"]')).toHaveAttribute('data-sortable-id', 'r::11')
+})
+
+test('center third places an item as the last sibling of a subtask series', async ({ page, request }) => {
+  await page.goto('/')
+  await expect(page.locator('[data-task-id="1"]')).toBeVisible()
+  await expect(page.locator('[data-task-id="12"]')).toBeVisible()
+  await expect(page.locator('[data-task-id="5"]')).toBeVisible()
+
+  const source = page.locator('[data-task-id="5"] [data-drag-handle]')
+  const aboveRow = page.locator('[data-task-id="12"]')
+  const belowRow = page.locator('[data-task-id="2"]')
+  const aboveBox = await aboveRow.boundingBox()
+  const belowBox = await belowRow.boundingBox()
+  const listBox = await page.locator('main').boundingBox()
+  expect(aboveBox).not.toBeNull()
+  expect(belowBox).not.toBeNull()
+  expect(listBox).not.toBeNull()
+  if (!aboveBox || !belowBox || !listBox) throw new Error('rows not measurable')
+
+  const relationRequest = page.waitForRequest((req) =>
+    req.method() === 'PUT' && req.url().endsWith('/api/v1/tasks/1/relations')
+  )
+  // Drop in the gap below task 12 (last subtask of task 1), center third = sibling of above (task 12)
+  await dragHandleTo(page, source, {
+    x: listBox.x + listBox.width * 0.5,
+    y: belowBox.y + 2,
+  }, page.locator('[data-task-id="5"]'))
+  // verify preview reflected sibling-of-above at subtask depth before drop completed
+  // (dragHandleTo already released; relation request confirms the drop semantics)
+  const rel = await relationRequest
+  expect((await rel.postDataJSON() as { other_task_id: number }).other_task_id).toBe(5)
+
+  await expect(page.locator('[data-task-id="5"]')).toHaveAttribute('data-sortable-id', '1::5')
+  await expect.poll(async () => {
+    const state = await (await request.get('/api/v1/test-state')).json() as { parents: Record<string, number> }
+    return state.parents['5']
+  }).toBe(1)
+
+  await page.reload()
+  await expect(page.locator('[data-task-id="5"]')).toBeVisible()
+  await expect(page.locator('[data-task-id="5"]')).toHaveAttribute('data-sortable-id', '1::5')
+  // task 5 should be the last child of task 1 (after task 12)
+  const ids = await page.locator('[data-task-id]').evaluateAll((els) =>
+    els.map((e) => e.getAttribute('data-task-id')).filter(Boolean)
+  )
+  expect(ids.indexOf('5')).toBeGreaterThan(ids.indexOf('12'))
+  expect(ids.indexOf('5')).toBeLessThan(ids.indexOf('2'))
 })
