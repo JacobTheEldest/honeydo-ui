@@ -98,6 +98,8 @@ test('completing several tasks keeps earlier completions undoable', async ({
   request,
 }) => {
   await page.goto('/')
+  // Capture baselines only after the initial task fetch has rendered rows.
+  await expect(page.locator('[data-task-id="1"]')).toBeVisible()
   const orderBefore = await visibleRootIds(page)
 
   await page.locator('[data-task-id="1"] button[aria-label="Mark complete"]').click()
