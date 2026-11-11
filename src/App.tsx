@@ -9,6 +9,7 @@ import {
 } from '@dnd-kit/sortable'
 import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown, Sun, Moon } from 'lucide-react'
 import { useVikunjaApi } from './hooks/useVikunjaApi.ts'
+import { useUndoableCompletion } from './hooks/useUndoableCompletion.ts'
 import { useDarkMode } from './hooks/useDarkMode.ts'
 import { useTaskDragAndDrop } from './hooks/useTaskDragAndDrop.ts'
 import { usePullToRefresh } from './hooks/usePullToRefresh.ts'
@@ -59,9 +60,7 @@ export default function App() {
   const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null)
   const [unlabelRequest, setUnlabelRequest] = useState<{ taskId: number; busy: boolean } | null>(null)
   const createdPositionsRef = useRef(new Map<number, { parentId: number | null; position: number }>())
-  const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [composerState, composerDispatch] = useReducer(composerReducer, initialComposerState)
-  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Find or create Honey-Do label
   useEffect(() => {
@@ -110,15 +109,14 @@ export default function App() {
   }, [tasks])
 
   // Stable handlers
-  const notify = useCallback((message: string) => {
-    setToastMessage(message)
-    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current)
-    toastTimeoutRef.current = setTimeout(() => setToastMessage(null), 4000)
-  }, [])
-
-  useEffect(() => () => {
-    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current)
-  }, [])
+  const {
+    handleToggleDone,
+    handleUpdateTitle,
+    undo,
+    notify,
+    toast,
+    toastHandlers,
+  } = useUndoableCompletion({ byId, updateTask })
 
   const handleAddSubtask = useCallback((parentId: number) => {
     setCollapsed((previous) => {
@@ -198,22 +196,6 @@ export default function App() {
       setUnlabelRequest(null)
     }
   }, [unlabelNode, unlabelRequest, removeFromHoneyDo, notify])
-
-  const handleToggleDone = useCallback(
-    (id: number, done: boolean) => {
-      const task = byId.get(id)
-      if (task) updateTask(task, { done })
-    },
-    [byId, updateTask]
-  )
-
-  const handleUpdateTitle = useCallback(
-    (id: number, title: string) => {
-      const task = byId.get(id)
-      if (task) updateTask(task, { title })
-    },
-    [byId, updateTask]
-  )
 
   const handleCreateTask = useCallback(
     async (title: string, placement: import('./utils/composerState.ts').ComposerPlacement) => {
@@ -552,13 +534,26 @@ export default function App() {
         />
       )}
 
-      {toastMessage && (
+      {toast && (
         <div
           role="status"
           aria-live="polite"
-          className="fixed bottom-20 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-gray-900 px-4 py-2 text-sm text-white shadow-lg dark:bg-gray-100 dark:text-gray-900 max-w-[calc(100vw-2rem)]"
+          data-toast
+          {...toastHandlers}
+          className="fixed bottom-20 left-1/2 z-50 -translate-x-1/2 flex items-center gap-3 rounded-lg bg-gray-900 px-4 py-2 text-sm text-white shadow-lg dark:bg-gray-100 dark:text-gray-900 max-w-[calc(100vw-2rem)]"
         >
-          {toastMessage}
+          <span>{toast.message}</span>
+          {toast.undoTaskId !== undefined && (
+            <button
+              type="button"
+              onClick={() => {
+                if (toast.undoTaskId !== undefined) undo(toast.undoTaskId)
+              }}
+              className="shrink-0 rounded font-semibold text-amber-300 hover:text-amber-200 dark:text-amber-600 dark:hover:text-amber-700"
+            >
+              Undo
+            </button>
+          )}
         </div>
       )}
 

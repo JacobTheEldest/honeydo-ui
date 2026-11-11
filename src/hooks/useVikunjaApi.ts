@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { VikunjaTask, VikunjaLabel, CreateTaskPayload, UpdateTaskPayload } from '../types/vikunja.ts'
 import { HONEYDO_LABEL } from '../config.ts'
 import { applyParentChangeToTasks, applyParentChange, type ParentChange } from '../utils/hierarchyMutations.ts'
@@ -61,6 +61,22 @@ export function useVikunjaApi() {
   const [tasks, setTasks] = useState<VikunjaTask[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Keep the freshest task list in a ref, updated synchronously with state.
+  // updateTask re-bases its full-resource POST body on it so a queued
+  // mutation cannot revert fields changed by a write that settled after the
+  // mutation's snapshot was captured.
+  const tasksRef = useRef<VikunjaTask[]>(tasks)
+  const setTasksAndRef = useCallback(
+    (value: VikunjaTask[] | ((previous: VikunjaTask[]) => VikunjaTask[])) => {
+      setTasks((previous) => {
+        const next = typeof value === 'function' ? value(previous) : value
+        tasksRef.current = next
+        return next
+      })
+    },
+    []
+  )
 
   const fetchLabels = useCallback(async () => {
     const data = await apiFetch<VikunjaLabel[]>('/labels?per_page=200')
@@ -174,7 +190,7 @@ export function useVikunjaApi() {
       await collectSubtaskDetails(enrichedSeed, seen, detailedIds)
 
       const allTasks = Array.from(seen.values())
-      setTasks(allTasks)
+      setTasksAndRef(allTasks)
       return allTasks
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to fetch tasks')
@@ -182,28 +198,28 @@ export function useVikunjaApi() {
     } finally {
       setLoading(false)
     }
-  }, [collectSubtaskDetails, fetchTaskDetail])
+  }, [collectSubtaskDetails, fetchTaskDetail, setTasksAndRef])
 
   const createTask = useCallback(async (payload: CreateTaskPayload) => {
     const task = await apiFetch<VikunjaTask>(`/projects/${payload.project_id}/tasks`, {
       method: 'PUT',
       body: JSON.stringify(payload),
     })
-    setTasks((prev) => [task, ...prev])
+    setTasksAndRef((prev) => [task, ...prev])
     return task
-  }, [])
+  }, [setTasksAndRef])
 
   const deleteTask = useCallback(async (taskId: number) => {
     await apiRequest(`/tasks/${taskId}`, { method: 'DELETE' })
-    setTasks((previous) => previous.filter((task) => task.id !== taskId))
-  }, [])
+    setTasksAndRef((previous) => previous.filter((task) => task.id !== taskId))
+  }, [setTasksAndRef])
 
   const createSubtask = useCallback(async (payload: CreateTaskPayload, parentId: number) => {
     const task = await apiFetch<VikunjaTask>(`/projects/${payload.project_id}/tasks`, {
       method: 'PUT',
       body: JSON.stringify(payload),
     })
-    setTasks((prev) => [task, ...prev])
+    setTasksAndRef((prev) => [task, ...prev])
     try {
       await apiRequest(`/tasks/${parentId}/relations`, {
         method: 'PUT',
@@ -221,7 +237,7 @@ export function useVikunjaApi() {
       await fetchTasks().catch(() => {})
       throw error
     }
-  }, [fetchTasks, deleteTask])
+  }, [fetchTasks, deleteTask, setTasksAndRef])
 
   const updateTaskRaw = useCallback(async (current: VikunjaTask, payload: UpdateTaskPayload) => {
     const task = await apiFetch<VikunjaTask>(`/tasks/${current.id}`, {
@@ -232,7 +248,7 @@ export function useVikunjaApi() {
     // into the latest local task, not the request's stale snapshot, so a due-date
     // response cannot undo an optimistic parent change made while it was in flight.
     const merged: VikunjaTask = { ...current, ...task, labels: current.labels }
-    setTasks((previous) => previous.map((latest) => latest.id === current.id
+    setTasksAndRef((previous) => previous.map((latest) => latest.id === current.id
       ? {
           ...latest,
           ...task,
@@ -242,23 +258,26 @@ export function useVikunjaApi() {
       : latest
     ))
     return merged
-  }, [])
+  }, [setTasksAndRef])
 
   /**
    * Vikunja POST /tasks/{id} replaces the resource. Start from the complete
    * fetched task object so fields not modeled by this UI (priority, dates,
-   * repeat settings, etc.) survive due-date/title edits as well.
+   * repeat settings, etc.) survive due-date/title edits as well. Re-base on
+   * the freshest local task so a queued mutation cannot revert fields changed
+   * by a write that settled after its snapshot was captured.
    */
   const updateTask = useCallback(async (current: VikunjaTask, patch: UpdateTaskPayload) => {
-    const merged = { ...current, ...patch }
-    return updateTaskRaw(current, merged)
+    const latest = tasksRef.current.find((task) => task.id === current.id) ?? current
+    const merged = { ...latest, ...patch }
+    return updateTaskRaw(latest, merged)
   }, [updateTaskRaw])
 
   const persistTaskOrdering = useCallback(async (
     updates: Array<{ task: VikunjaTask; due_date: string }>
   ) => {
     const dueDates = new Map(updates.map(({ task, due_date }) => [task.id, due_date]))
-    setTasks((prev) => prev.map((task) => {
+    setTasksAndRef((prev) => prev.map((task) => {
       const due_date = dueDates.get(task.id)
       return due_date === undefined ? task : { ...task, due_date }
     }))
@@ -271,7 +290,7 @@ export function useVikunjaApi() {
       await fetchTasks().catch(() => {})
       throw new Error('One or more task order updates failed')
     }
-  }, [fetchTasks, updateTask])
+  }, [fetchTasks, updateTask, setTasksAndRef])
 
   const addLabelToTask = useCallback(async (taskId: number, labelId: number) => {
     await apiFetch(`/tasks/${taskId}/labels`, {
@@ -282,14 +301,14 @@ export function useVikunjaApi() {
     // without waiting for a full fetchTasks() refresh.
     const label = labels.find((l) => l.id === labelId)
     if (!label) return
-    setTasks((prev) =>
+    setTasksAndRef((prev) =>
       prev.map((t) => {
         if (t.id !== taskId) return t
         if (t.labels?.some((l) => l.id === labelId)) return t
         return { ...t, labels: [...(t.labels ?? []), label] }
       })
     )
-  }, [labels])
+  }, [labels, setTasksAndRef])
 
   /**
    * Delete a label link (the labels array in a task POST body is ignored by
@@ -297,18 +316,18 @@ export function useVikunjaApi() {
    */
   const removeLabelFromTask = useCallback(async (taskId: number, labelId: number) => {
     await apiRequest(`/tasks/${taskId}/labels/${labelId}`, { method: 'DELETE' })
-    setTasks((prev) => prev.map((task) => task.id === taskId
+    setTasksAndRef((prev) => prev.map((task) => task.id === taskId
       ? { ...task, labels: (task.labels ?? []).filter((label) => label.id !== labelId) }
       : task
     ))
-  }, [])
+  }, [setTasksAndRef])
 
   const changeTaskParent = useCallback(async (change: ParentChange) => {
     const previousTasks = tasks
     const labelToAdd = change.labelIdToAdd === undefined
       ? undefined
       : labels.find((label) => label.id === change.labelIdToAdd)
-    setTasks((current) => applyParentChangeToTasks(current, change, labelToAdd))
+    setTasksAndRef((current) => applyParentChangeToTasks(current, change, labelToAdd))
 
     const writeDueDate = async (taskId: number, dueDate: string | null) => {
       const current = tasks.find((task) => task.id === taskId)
@@ -337,11 +356,11 @@ export function useVikunjaApi() {
         refresh: fetchTasks,
       })
     } catch (error) {
-      setTasks(previousTasks)
+      setTasksAndRef(previousTasks)
       await fetchTasks().catch(() => {})
       throw error
     }
-  }, [tasks, labels, updateTask, addLabelToTask, removeLabelFromTask, fetchTasks])
+  }, [tasks, labels, updateTask, addLabelToTask, removeLabelFromTask, fetchTasks, setTasksAndRef])
 
   /**
    * Remove the Honey-Do label and its sorting due_date from each target task.
