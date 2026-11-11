@@ -208,7 +208,7 @@ export default function TaskItem({
         {hasChildren ? (
           <button
             onClick={() => onToggleCollapse(task.id)}
-            className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 shrink-0 p-0.5 -ml-1"
+            className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 shrink-0 pl-3 pr-1.5 py-3 -ml-3.5 -mr-1 -my-3"
             aria-label={collapsed ? 'Expand subtasks' : 'Collapse subtasks'}
           >
             {collapsed ? (
@@ -226,7 +226,7 @@ export default function TaskItem({
           {...attributes}
           {...listeners}
           data-drag-handle
-          className="text-gray-300 dark:text-gray-600 cursor-grab active:cursor-grabbing shrink-0 p-1 touch-none"
+          className="text-gray-300 dark:text-gray-600 cursor-grab active:cursor-grabbing shrink-0 pl-1.5 pr-2 py-3 -ml-0.5 -mr-1 -my-3 touch-none"
           aria-label="Drag to reorder"
         >
           <GripVertical className="w-5 h-5" />

@@ -106,7 +106,7 @@ export default function TaskComposer({ state, dispatch, onCreate, depth = 0 }: T
           {...listeners}
           data-drag-handle
           aria-label="Drag to place new task"
-          className="text-gray-300 dark:text-gray-600 cursor-grab active:cursor-grabbing shrink-0 p-1 touch-none"
+          className="text-gray-300 dark:text-gray-600 cursor-grab active:cursor-grabbing shrink-0 pl-1.5 pr-2 py-3 -ml-0.5 -mr-1 -my-3 touch-none"
         >
           <GripVertical className="w-5 h-5" />
         </button>
