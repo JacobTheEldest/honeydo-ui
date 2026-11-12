@@ -113,10 +113,11 @@ app.delete('/api/v1/tasks/:parentId/relations/subtask/:childId', (req, res) => {
   parents.delete(childId)
   res.status(200).json({})
 })
-// Deleting a task is a soft-delete into Vikunja's trash (2.8.0) and removes
-// its relation rows in both directions; related tasks themselves survive but
-// become parentless orphans. Restoring from the trash does NOT bring the
-// relation rows back (verified against a live 2.8.0 instance).
+// Deleting a task is a soft-delete into Vikunja's trash (2.8.0). Relation
+// rows survive the delete (verified live 2026-11-12): they merely disappear
+// from related_tasks views while either endpoint is trashed, and restore
+// re-exposes both directions with no relink needed. Views are built from live
+// tasks only, which reproduces that hiding without touching the rows.
 app.delete('/api/v1/tasks/:id', (req, res) => {
   requests.push({ method: req.method, path: req.path })
   const id = Number(req.params.id)
@@ -124,10 +125,6 @@ app.delete('/api/v1/tasks/:id', (req, res) => {
   if (!task) return res.status(404).json({ message: 'not found' })
   tasks.delete(id)
   trashed.set(id, { ...task, deleted_at: new Date().toISOString() })
-  parents.delete(id)
-  for (const [childId, parentId] of [...parents]) {
-    if (parentId === id) parents.delete(childId)
-  }
   res.status(200).json({})
 })
 // Trash stack (Vikunja 2.8.0, v2 API only — no v1 equivalent).

@@ -159,13 +159,14 @@ test('deleting a parent asks for scope and this-task-only orphans its subtasks',
   await expect.poll(async () => (await deleteRequests(request)).map((entry) => entry.path))
     .toEqual(['/api/v1/tasks/1'])
 
-  // Only the parent was deleted: the subtasks survive in Vikunja, orphaned.
+  // Only the parent was deleted: the subtasks themselves survive in Vikunja.
+  // The relation rows survive too (verified live 2.8.0) — hidden from views
+  // while the parent is trashed, and re-exposed by a later restore.
   const state = await serverState(request)
   expect(state.tasks.some((task) => task.id === 11)).toBe(true)
   expect(state.tasks.some((task) => task.id === 12)).toBe(true)
   expect(await trashedIds(request)).toEqual([1])
-  expect(state.parents['11']).toBeUndefined()
-  expect(state.parents['12']).toBeUndefined()
+  expect(state.parents).toMatchObject({ '11': 1, '12': 1 })
 
   await page.reload()
   await expect(row(page, 1)).toHaveCount(0)
@@ -173,7 +174,7 @@ test('deleting a parent asks for scope and this-task-only orphans its subtasks',
   await expect(row(page, 12)).toHaveCount(0)
 })
 
-test('undoing a task-only delete restores the parent and re-links its subtasks', async ({
+test('undoing a task-only delete restores the parent with its subtask links intact', async ({
   page,
   request,
 }) => {
@@ -189,14 +190,19 @@ test('undoing a task-only delete restores the parent and re-links its subtasks',
   const toast = page.locator('[data-toast]')
   await toast.getByRole('button', { name: 'Undo' }).click()
 
-  // The delete destroyed the relation rows; undo restores the task and
-  // re-links the orphaned subtasks back under it.
+  // Verified live on Vikunja 2.8.0: restore re-exposes the relation rows
+  // itself, so undo must issue no relink writes — only the restore.
   await expect(row(page, 1)).toBeVisible()
   await expect(row(page, 11)).toHaveAttribute('data-sortable-id', '1::11')
   await expect(row(page, 12)).toHaveAttribute('data-sortable-id', '1::12')
   await expect.poll(async () => (await serverState(request)).parents)
     .toMatchObject({ '11': 1, '12': 1 })
   expect(await trashedIds(request)).toEqual([])
+  expect(
+    (await serverState(request)).requests.filter(
+      (entry) => entry.method === 'PUT' && entry.path.includes('/relations'),
+    ),
+  ).toEqual([])
 
   await page.reload()
   await expect(row(page, 11)).toHaveAttribute('data-sortable-id', '1::11')
@@ -233,10 +239,16 @@ test('deleting a subtree hides it, commits every descendant, and Undo restores i
   await expect(row(page, 1)).toBeVisible()
   await expect(row(page, 11)).toHaveAttribute('data-sortable-id', '1::11')
   await expect(row(page, 12)).toHaveAttribute('data-sortable-id', '1::12')
-  // All restored from the trash and the destroyed relation rows re-linked.
+  // All restored from the trash; Vikunja re-exposes the relation rows itself,
+  // so no relink writes may fire during the undo.
   expect(await trashedIds(request)).toEqual([])
   await expect.poll(async () => (await serverState(request)).parents)
     .toMatchObject({ '11': 1, '12': 1 })
+  expect(
+    (await serverState(request)).requests.filter(
+      (entry) => entry.method === 'PUT' && entry.path.includes('/relations'),
+    ),
+  ).toEqual([])
   await page.reload()
   await expect(row(page, 1)).toBeVisible()
   await expect(row(page, 11)).toBeVisible()
