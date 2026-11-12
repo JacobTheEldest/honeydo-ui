@@ -37,6 +37,24 @@ async function apiRequest(path: string, options?: RequestInit): Promise<void> {
   }
 }
 
+/**
+ * Vikunja's v1 compatibility API has no trash routes: restore lives on the
+ * v2 API only (new endpoints land there since 2.4.0). Same credentials.
+ */
+async function apiV2Request(path: string, options?: RequestInit): Promise<void> {
+  const res = await fetch(`/api/v2${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options?.headers,
+    },
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`API v2 ${path} failed: ${res.status} ${text}`)
+  }
+}
+
 /** Run a list of promise-producing functions with a fixed concurrency cap. */
 async function runWithConcurrency<T, R>(
   items: T[],
@@ -214,6 +232,23 @@ export function useVikunjaApi() {
     setTasksAndRef((previous) => previous.filter((task) => task.id !== taskId))
   }, [setTasksAndRef])
 
+  /** Un-delete a task from Vikunja's trash (2.8.0+; v2 API only). */
+  const restoreTask = useCallback(async (taskId: number) => {
+    await apiV2Request(`/tasks/${taskId}/restore`, { method: 'POST' })
+  }, [])
+
+  /** Re-create one parent -> child subtask relation row. */
+  const addSubtaskRelation = useCallback(async (parentId: number, childId: number) => {
+    await apiRequest(`/tasks/${parentId}/relations`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        task_id: parentId,
+        other_task_id: childId,
+        relation_kind: 'subtask',
+      }),
+    })
+  }, [])
+
   const createSubtask = useCallback(async (payload: CreateTaskPayload, parentId: number) => {
     const task = await apiFetch<VikunjaTask>(`/projects/${payload.project_id}/tasks`, {
       method: 'PUT',
@@ -340,16 +375,7 @@ export function useVikunjaApi() {
         removeRelation: async (parentId, childId) => {
           await apiRequest(`/tasks/${parentId}/relations/subtask/${childId}`, { method: 'DELETE' })
         },
-        addRelation: async (parentId, childId) => {
-          await apiRequest(`/tasks/${parentId}/relations`, {
-            method: 'PUT',
-            body: JSON.stringify({
-              task_id: parentId,
-              other_task_id: childId,
-              relation_kind: 'subtask',
-            }),
-          })
-        },
+        addRelation: addSubtaskRelation,
         setDueDate: writeDueDate,
         addLabel: addLabelToTask,
         removeLabel: removeLabelFromTask,
@@ -360,7 +386,7 @@ export function useVikunjaApi() {
       await fetchTasks().catch(() => {})
       throw error
     }
-  }, [tasks, labels, updateTask, addLabelToTask, removeLabelFromTask, fetchTasks, setTasksAndRef])
+  }, [tasks, labels, updateTask, addLabelToTask, removeLabelFromTask, addSubtaskRelation, fetchTasks, setTasksAndRef])
 
   /**
    * Remove the Honey-Do label and its sorting due_date from each target task.
@@ -402,6 +428,8 @@ export function useVikunjaApi() {
     createTask,
     createSubtask,
     deleteTask,
+    restoreTask,
+    addSubtaskRelation,
     updateTask,
     persistTaskOrdering,
     changeTaskParent,

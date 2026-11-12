@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { UpdateTaskPayload, VikunjaTask } from '../types/vikunja.ts'
 import { currentEntry, undoStackReducer, type UndoEntry } from '../utils/undoStack.ts'
 import { createTaskMutationQueue } from '../utils/taskMutationQueue.ts'
-import { applyDelete, type DeletePlan } from '../utils/delete.ts'
+import { applyDelete, applyRestore, type DeletePlan } from '../utils/delete.ts'
 
 const SAVE_ERROR = 'Could not update this task.'
 const DELETE_ERROR = 'Could not delete this task.'
+const RESTORE_ERROR = 'Could not restore this task.'
 
 export interface UndoToast {
   message: string
@@ -16,10 +17,14 @@ export interface UndoToast {
 export interface UseUndoableActionsOptions {
   byId: Map<number, VikunjaTask>
   updateTask: (task: VikunjaTask, patch: UpdateTaskPayload) => Promise<VikunjaTask>
-  /** Server-side deletion, issued when a delete's undo window closes. */
+  /** Server-side deletion into Vikunja's trash, issued as soon as a delete is confirmed. */
   deleteTask: (taskId: number) => Promise<void>
-  /** Authoritative refetch run after a delete commit settles the tree. */
-  refresh: () => Promise<unknown>
+  /** Undo of a delete: un-deletes a task from Vikunja's trash (2.8.0+, v2 API). */
+  restoreTask: (taskId: number) => Promise<unknown>
+  /** Re-creates one parent -> child subtask relation row (deletes destroy them). */
+  addSubtaskRelation: (parentId: number, childId: number) => Promise<unknown>
+  /** Authoritative refetch; settles the tree after writes and backs restore presence checks. */
+  refresh: () => Promise<VikunjaTask[]>
   /** How long an undo toast stays up (ms). */
   undoTimeoutMs?: number
   /** How long a plain notification stays up (ms). */
@@ -33,16 +38,19 @@ export interface UseUndoableActionsOptions {
  * instead of discarding it. Letting the toast time out (or replacing it with
  * a notification) closes the undo window and drops the stack.
  *
- * Deletions are deferred: the task is hidden from the tree immediately and
- * the server DELETE is issued only when the undo window closes, so Undo can
- * restore the exact task (Vikunja has no undelete). Pending-delete ids stay
- * masked from the tree until the server deletes settle, so a refetch during
- * the window cannot resurrect a task that is about to be deleted.
+ * Deletions commit to the server immediately: Vikunja 2.8.0's trash keeps
+ * them recoverable for 30 days, so Undo restores the exact tasks from the
+ * trash (and re-links the relation rows the delete destroyed) instead of
+ * cancelling a pending write. Pending-delete ids stay masked from the tree
+ * until the server deletes settle, so a refetch during the round trip cannot
+ * resurrect a task that is being deleted.
  */
 export function useUndoableActions({
   byId,
   updateTask,
   deleteTask,
+  restoreTask,
+  addSubtaskRelation,
   refresh,
   undoTimeoutMs = 7000,
   infoTimeoutMs = 4000,
@@ -96,26 +104,12 @@ export function useUndoableActions({
 
   const fire = useCallback(() => {
     timerRef.current = null
-    const entries = stackRef.current
-    const deleteEntries = entries.filter((entry) => entry.kind === 'delete')
     // The toast is the undo surface; when it goes away, so does undoability.
+    // Deletes already committed when they were confirmed — Vikunja's trash
+    // holds them for 30 days after the window closes.
     applyStack([])
     applyToast(null)
-    if (deleteEntries.length === 0) return
-    const targets = deleteEntries.flatMap((entry) => entry.deletedTasks ?? [])
-    // Keep these ids masked until the server deletes settle so a failed
-    // delete reappears only alongside its error, never before.
-    applyDelete(targets, {
-      deleteTask: (id) => queue.enqueue(id, () => deleteTask(id)),
-      refresh,
-    })
-      .catch((error) => notify(error instanceof Error ? error.message : DELETE_ERROR))
-      .finally(() => {
-        const settled = new Set(pendingDeleteIdsRef.current)
-        for (const task of targets) settled.delete(task.id)
-        applyPendingDeleteIds(settled)
-      })
-  }, [queue, deleteTask, refresh, notify])
+  }, [])
 
   const pauseTimer = () => {
     const timer = timerRef.current
@@ -189,9 +183,10 @@ export function useUndoableActions({
   )
 
   /**
-   * Hide a planned deletion behind the undo toast. The tasks leave the tree
-   * at once (via `pendingDeleteIds`); the server DELETEs are issued when the
-   * undo window closes (see `fire`).
+   * Commit a planned deletion at once and hide it behind the undo toast. The
+   * tasks leave the tree immediately (via `pendingDeleteIds`) and the server
+   * DELETEs go out at once — Vikunja's trash makes them recoverable, so Undo
+   * restores from the trash instead of cancelling a pending write.
    */
   const handleDelete = useCallback(
     (plan: DeletePlan) => {
@@ -203,6 +198,7 @@ export function useUndoableActions({
             title: plan.root.title,
             kind: 'delete',
             deletedTasks: plan.targets,
+            relationEdges: plan.edges,
           },
         })
       )
@@ -211,24 +207,48 @@ export function useUndoableActions({
         ...plan.targets.map((task) => task.id),
       ]))
       showTopToast()
+      // Keep these ids masked until the server deletes settle so a failed
+      // delete reappears only alongside its error, never before.
+      applyDelete(plan.targets, {
+        deleteTask: (id) => queue.enqueue(id, () => deleteTask(id)),
+        refresh,
+      })
+        .catch((error) => notify(error instanceof Error ? error.message : DELETE_ERROR))
+        .finally(() => {
+          const settled = new Set(pendingDeleteIdsRef.current)
+          for (const task of plan.targets) settled.delete(task.id)
+          applyPendingDeleteIds(settled)
+        })
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [undoTimeoutMs]
+    [deleteTask, refresh, notify]
   )
 
   const undo = useCallback((id: number) => {
     const entry = stackRef.current.find((candidate) => candidate.id === id)
     if (entry?.kind === 'delete') {
-      const restored = new Set((entry.deletedTasks ?? []).map((task) => task.id))
-      applyPendingDeleteIds(new Set(
-        [...pendingDeleteIdsRef.current].filter((candidate) => !restored.has(candidate))
-      ))
+      const targets = entry.deletedTasks ?? []
       removeEntry(id)
+      // Restore from the trash, serialized behind any delete still in flight
+      // for the same task (the queue is FIFO per task id), then re-link the
+      // relation rows the delete destroyed.
+      applyRestore(targets, entry.relationEdges ?? [], {
+        restoreTask: (taskId) => queue.enqueue(taskId, () => restoreTask(taskId)),
+        addSubtaskRelation,
+        refresh,
+      })
+        .catch((error) => notify(error instanceof Error ? error.message : RESTORE_ERROR))
+        .finally(() => {
+          const restored = new Set(targets.map((task) => task.id))
+          applyPendingDeleteIds(new Set(
+            [...pendingDeleteIdsRef.current].filter((candidate) => !restored.has(candidate))
+          ))
+        })
       return
     }
     handleToggleDone(id, false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleToggleDone])
+  }, [handleToggleDone, queue, restoreTask, addSubtaskRelation, refresh, notify])
 
   const handleUpdateTitle = useCallback(
     (id: number, title: string) => {

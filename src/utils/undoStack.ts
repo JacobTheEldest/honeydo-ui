@@ -1,5 +1,11 @@
 import type { VikunjaTask } from '../types/vikunja.ts'
 
+/** A subtask relation row (parent -> child) that a delete destroys. */
+export interface RelationEdge {
+  parentId: number
+  childId: number
+}
+
 export interface UndoEntry {
   id: number
   title: string
@@ -7,6 +13,12 @@ export interface UndoEntry {
   kind: 'complete' | 'delete'
   /** For delete entries: every task the entry hides, deepest-first. */
   deletedTasks?: VikunjaTask[]
+  /**
+   * For delete entries: relation rows the delete destroys (Vikunja removes
+   * them at delete time). Undo restores the tasks from the trash and re-links
+   * the edges that did not come back.
+   */
+  relationEdges?: RelationEdge[]
 }
 
 export type UndoStackAction =

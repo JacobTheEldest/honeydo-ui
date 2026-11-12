@@ -63,6 +63,8 @@ export default function App() {
     removeFromHoneyDo,
     addLabelToTask,
     createLabel,
+    restoreTask,
+    addSubtaskRelation,
   } = useVikunjaApi()
 
   const { dark, toggle: toggleDarkMode } = useDarkMode()
@@ -109,7 +111,7 @@ export default function App() {
     toast,
     pendingDeleteIds,
     toastHandlers,
-  } = useUndoableActions({ byId, updateTask, deleteTask, refresh: fetchTasks })
+  } = useUndoableActions({ byId, updateTask, deleteTask, restoreTask, addSubtaskRelation, refresh: fetchTasks })
 
   // Tasks hidden behind a pending delete stay out of the tree — including
   // through refetches — until the server deletes settle, so Undo can restore

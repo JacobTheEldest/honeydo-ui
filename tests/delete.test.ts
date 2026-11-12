@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { TaskTreeNode } from '../src/utils/taskTree.ts'
+import type { VikunjaTask } from '../src/types/vikunja.ts'
 import { positionToDueDate } from '../src/utils/ordering.ts'
 import {
   applyDelete,
+  applyRestore,
+  collectRelationEdges,
   planDelete,
   resolveDeleteTargets,
   type DeleteApi,
+  type RestoreApi,
 } from '../src/utils/delete.ts'
 
 const orderDate = positionToDueDate
@@ -122,4 +126,132 @@ test('applyDelete surfaces a refresh failure alongside delete failures', async (
     throw new Error('refresh down')
   }
   await assert.rejects(applyDelete([makeNode(9, 'Solo')], api), /refresh failed: refresh down/)
+})
+
+function freshTask(
+  id: number,
+  related?: { subtask?: Array<{ id: number; title: string }>; parenttask?: Array<{ id: number; title: string }> }
+): VikunjaTask {
+  return { ...makeNode(id, `Task ${id}`), related_tasks: related ?? {} }
+}
+
+function makeRestoreApi(options: { failRestore?: number[]; fresh?: VikunjaTask[]; failRelink?: boolean } = {}) {
+  const restored: number[] = []
+  const relinked: Array<[number, number]> = []
+  const calls: string[] = []
+  let refreshes = 0
+  const api: RestoreApi = {
+    async restoreTask(taskId) {
+      calls.push(`restore ${taskId}`)
+      if (options.failRestore?.includes(taskId)) throw new Error(`restore ${taskId} failed`)
+      restored.push(taskId)
+    },
+    async addSubtaskRelation(parentId, childId) {
+      calls.push(`relink ${parentId}->${childId}`)
+      if (options.failRelink) throw new Error('relink down')
+      relinked.push([parentId, childId])
+    },
+    async refresh() {
+      calls.push('refresh')
+      refreshes++
+      return options.fresh ?? []
+    },
+  }
+  return { api, restored, relinked, calls, refreshes: () => refreshes }
+}
+
+test('collectRelationEdges captures both views of a row exactly once', () => {
+  const parent = makeNode(1, 'R')
+  parent.related_tasks = { subtask: [{ id: 2, title: 'C' }] }
+  const child = makeNode(2, 'C')
+  child.related_tasks = { parenttask: [{ id: 1, title: 'R' }] }
+  assert.deepEqual(collectRelationEdges([parent, child]), [{ parentId: 1, childId: 2 }])
+})
+
+test('planDelete captures the relation rows a task-only delete destroys', () => {
+  const node = makeTree()
+  node.related_tasks = {
+    parenttask: [{ id: 9, title: 'Outside parent' }],
+    subtask: [{ id: 2, title: 'C' }, { id: 4, title: 'Leaf' }],
+  }
+  const plan = planDelete({ type: 'confirm', scope: 'task' }, node)
+  assert.ok(plan)
+  assert.deepEqual(plan.edges, [
+    { parentId: 9, childId: 1 },
+    { parentId: 1, childId: 2 },
+    { parentId: 1, childId: 4 },
+  ])
+})
+
+test('applyRestore restores every target and re-links only missing relation rows', async () => {
+  const targets = [makeNode(3, 'G'), makeNode(1, 'R')]
+  const { api, restored, relinked, calls } = makeRestoreApi({
+    fresh: [
+      freshTask(1, { subtask: [] }),
+      freshTask(2, { subtask: [{ id: 3, title: 'G' }], parenttask: [{ id: 1, title: 'R' }] }),
+      freshTask(3, { parenttask: [{ id: 2, title: 'C' }] }),
+    ],
+  })
+  await applyRestore(targets, [
+    { parentId: 1, childId: 2 }, // missing after restore -> re-linked
+    { parentId: 2, childId: 3 }, // present -> skipped
+    { parentId: 7, childId: 8 }, // endpoint absent -> skipped
+  ], api)
+  assert.deepEqual(restored, [3, 1])
+  assert.deepEqual(relinked, [[1, 2]])
+  // A relink always triggers one more reconciliation refresh afterwards.
+  assert.deepEqual(calls, ['restore 3', 'restore 1', 'refresh', 'relink 1->2', 'refresh'])
+})
+
+test('applyRestore treats a failed restore of a present task as already fine', async () => {
+  // A racing undo can restore before the delete settles; the delete then 404s
+  // at restore time but the task is present, which is what counts.
+  const { api, calls } = makeRestoreApi({ failRestore: [5], fresh: [freshTask(5)] })
+  await applyRestore([makeNode(5, 'Root C')], [], api)
+  assert.deepEqual(calls, ['restore 5', 'refresh'])
+})
+
+test('applyRestore reports tasks that failed to restore and are absent', async () => {
+  const { api } = makeRestoreApi({ failRestore: [5, 6], fresh: [freshTask(6)] })
+  await assert.rejects(
+    applyRestore([makeNode(5, 'Root C'), makeNode(6, 'Other')], [], api),
+    (error: Error) => {
+      assert.match(error.message, /Couldn't restore/)
+      assert.match(error.message, /Root C \(still in Vikunja's trash\)/)
+      assert.doesNotMatch(error.message, /Other/)
+      return true
+    }
+  )
+})
+
+test('applyRestore reports relation rows that could not be re-linked', async () => {
+  const { api, refreshes } = makeRestoreApi({
+    failRelink: true,
+    fresh: [freshTask(1, { subtask: [] }), freshTask(2, { parenttask: [{ id: 1, title: 'R' }] })],
+  })
+  await assert.rejects(
+    applyRestore([makeNode(1, 'R')], [{ parentId: 1, childId: 2 }], api),
+    (error: Error) => {
+      assert.match(error.message, /Couldn't restore/)
+      assert.match(error.message, /Task 1 → Task 2 \(relink down\)/)
+      return true
+    }
+  )
+  // A relink failure triggers one more reconciliation refresh.
+  assert.equal(refreshes(), 2)
+})
+
+test('applyRestore surfaces a refresh failure without attempting relinks', async () => {
+  const { api } = makeRestoreApi()
+  api.refresh = async () => {
+    throw new Error('refresh down')
+  }
+  await assert.rejects(
+    applyRestore([makeNode(5, 'Root C')], [{ parentId: 5, childId: 6 }], api),
+    (error: Error) => {
+      assert.match(error.message, /Couldn't restore/)
+      assert.match(error.message, /could not be refreshed \(refresh down\)/)
+      return true
+    }
+  )
 })

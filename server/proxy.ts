@@ -44,9 +44,11 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
-// API proxy - forward all /api/v1/* to Vikunja with auth header
-app.use('/api/v1', async (req, res) => {
-  const upstreamUrl = `${upstreamBase}/api/v1${req.url}`
+// API proxy - forward /api/v1/* and /api/v2/* to Vikunja with auth header.
+// v1 carries the app's CRUD; v2 carries the trash stack (restore/purge),
+// which has no v1 equivalent. Same credentials on both.
+const apiProxy = async (req: express.Request, res: express.Response) => {
+  const upstreamUrl = `${upstreamBase}${req.baseUrl}${req.url}`
   const start = Date.now()
 
   const headers = new Headers()
@@ -76,7 +78,7 @@ app.use('/api/v1', async (req, res) => {
     })
 
     const duration = Date.now() - start
-    console.log(`[PROXY] ${req.method} ${req.url} -> ${upstreamRes.status} (${duration}ms)`)
+    console.log(`[PROXY] ${req.method} ${req.baseUrl}${req.url} -> ${upstreamRes.status} (${duration}ms)`)
 
     res.status(upstreamRes.status)
     upstreamRes.headers.forEach((value, key) => {
@@ -96,10 +98,13 @@ app.use('/api/v1', async (req, res) => {
     res.end()
   } catch (err) {
     const duration = Date.now() - start
-    console.error(`[PROXY] ${req.method} ${req.url} -> ERROR (${duration}ms):`, err)
+    console.error(`[PROXY] ${req.method} ${req.baseUrl}${req.url} -> ERROR (${duration}ms):`, err)
     res.status(502).json({ error: 'Proxy error', message: String(err) })
   }
-})
+}
+
+app.use('/api/v1', apiProxy)
+app.use('/api/v2', apiProxy)
 
 // Serve static files
 const distPath = path.resolve(__dirname, '../../dist')

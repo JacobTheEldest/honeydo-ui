@@ -5,6 +5,7 @@ app.use(express.json())
 const HONEY_DO = { id: 1, title: 'Honey-Do' }
 const date = (position) => new Date(Date.UTC(2100, 0, 1, 0, position)).toISOString()
 const tasks = new Map()
+const trashed = new Map()
 const parents = new Map([[11, 1], [12, 1], [21, 2], [31, 30]])
 const requests = []
 let nextCreatedId = 100
@@ -27,6 +28,7 @@ function addTask(id, title, project_id, position, labels = []) {
 
 function resetFixture() {
   tasks.clear()
+  trashed.clear()
   parents.clear()
   requests.length = 0
   parents.set(11, 1)
@@ -73,8 +75,27 @@ app.get('/api/v1/projects/:id/tasks', (req, res) => {
   res.json([...tasks.values()].filter((task) => task.project_id === projectId))
 })
 app.get('/api/v1/tasks/:id', (req, res) => {
-  const task = tasks.get(Number(req.params.id))
-  if (!task) return res.status(404).json({ message: 'not found' })
+  const id = Number(req.params.id)
+  const task = tasks.get(id)
+  if (!task) {
+    // Vikunja 2.8.0: reading a trashed task returns 404 with code 4040 and
+    // trash metadata (verified against a live instance).
+    const trashedTask = trashed.get(id)
+    if (trashedTask) {
+      return res.status(404).json({
+        code: 4040,
+        message: 'This task is in the trash.',
+        details: {
+          id,
+          project_id: trashedTask.project_id,
+          deleted_at: trashedTask.deleted_at,
+          deleted_by: { id: 1, name: '', username: 'fixture', created: date(0), updated: date(0) },
+          can_restore: true,
+        },
+      })
+    }
+    return res.status(404).json({ message: 'not found' })
+  }
   res.json(detail(task))
 })
 app.put('/api/v1/tasks/:id/relations', (req, res) => {
@@ -92,17 +113,42 @@ app.delete('/api/v1/tasks/:parentId/relations/subtask/:childId', (req, res) => {
   parents.delete(childId)
   res.status(200).json({})
 })
-// Deleting a task removes its relation rows in Vikunja (both directions);
-// related tasks themselves survive but become parentless orphans.
+// Deleting a task is a soft-delete into Vikunja's trash (2.8.0) and removes
+// its relation rows in both directions; related tasks themselves survive but
+// become parentless orphans. Restoring from the trash does NOT bring the
+// relation rows back (verified against a live 2.8.0 instance).
 app.delete('/api/v1/tasks/:id', (req, res) => {
   requests.push({ method: req.method, path: req.path })
   const id = Number(req.params.id)
-  if (!tasks.has(id)) return res.status(404).json({ message: 'not found' })
+  const task = tasks.get(id)
+  if (!task) return res.status(404).json({ message: 'not found' })
   tasks.delete(id)
+  trashed.set(id, { ...task, deleted_at: new Date().toISOString() })
   parents.delete(id)
   for (const [childId, parentId] of [...parents]) {
     if (parentId === id) parents.delete(childId)
   }
+  res.status(200).json({})
+})
+// Trash stack (Vikunja 2.8.0, v2 API only — no v1 equivalent).
+app.get('/api/v2/tasks/deleted', (_req, res) => {
+  res.json([...trashed.values()])
+})
+app.post('/api/v2/tasks/:id/restore', (req, res) => {
+  requests.push({ method: req.method, path: req.path })
+  const id = Number(req.params.id)
+  const task = trashed.get(id)
+  if (!task) return res.status(404).json({ message: 'not found' })
+  trashed.delete(id)
+  const { deleted_at: _deletedAt, ...restored } = task
+  tasks.set(id, restored)
+  res.json(detail(restored))
+})
+app.delete('/api/v2/tasks/:id/permanent', (req, res) => {
+  requests.push({ method: req.method, path: req.path })
+  const id = Number(req.params.id)
+  if (!trashed.has(id)) return res.status(404).json({ message: 'not found' })
+  trashed.delete(id)
   res.status(200).json({})
 })
 app.post('/api/v1/tasks/:id', (req, res) => {
@@ -165,6 +211,7 @@ app.get('/api/v1/test-state', (_req, res) => {
   res.json({
     parents: Object.fromEntries(parents),
     tasks: [...tasks.values()],
+    trashed: [...trashed.values()].map(({ id, title }) => ({ id, title })),
     requests,
   })
 })
