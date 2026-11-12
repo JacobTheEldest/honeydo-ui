@@ -401,6 +401,7 @@ export function useVikunjaApi() {
     fetchTasks,
     createTask,
     createSubtask,
+    deleteTask,
     updateTask,
     persistTaskOrdering,
     changeTaskParent,

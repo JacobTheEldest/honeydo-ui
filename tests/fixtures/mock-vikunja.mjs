@@ -92,6 +92,19 @@ app.delete('/api/v1/tasks/:parentId/relations/subtask/:childId', (req, res) => {
   parents.delete(childId)
   res.status(200).json({})
 })
+// Deleting a task removes its relation rows in Vikunja (both directions);
+// related tasks themselves survive but become parentless orphans.
+app.delete('/api/v1/tasks/:id', (req, res) => {
+  requests.push({ method: req.method, path: req.path })
+  const id = Number(req.params.id)
+  if (!tasks.has(id)) return res.status(404).json({ message: 'not found' })
+  tasks.delete(id)
+  parents.delete(id)
+  for (const [childId, parentId] of [...parents]) {
+    if (parentId === id) parents.delete(childId)
+  }
+  res.status(200).json({})
+})
 app.post('/api/v1/tasks/:id', (req, res) => {
   requests.push({ method: req.method, path: req.path, body: req.body })
   const id = Number(req.params.id)

@@ -6,7 +6,7 @@ import {
   type UndoEntry,
 } from '../src/utils/undoStack.ts'
 
-const entry = (id: number, title: string): UndoEntry => ({ id, title })
+const entry = (id: number, title: string): UndoEntry => ({ id, title, kind: 'complete' })
 
 test('push records a completion and surfaces it as the current entry', () => {
   const stack = undoStackReducer([], { type: 'push', entry: entry(1, 'Root A') })

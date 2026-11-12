@@ -1,6 +1,12 @@
+import type { VikunjaTask } from '../types/vikunja.ts'
+
 export interface UndoEntry {
   id: number
   title: string
+  /** Completions undo a done write; deletes restore tasks hidden from the list. */
+  kind: 'complete' | 'delete'
+  /** For delete entries: every task the entry hides, deepest-first. */
+  deletedTasks?: VikunjaTask[]
 }
 
 export type UndoStackAction =

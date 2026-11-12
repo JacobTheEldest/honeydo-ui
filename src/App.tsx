@@ -9,7 +9,7 @@ import {
 } from '@dnd-kit/sortable'
 import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown, Sun, Moon } from 'lucide-react'
 import { useVikunjaApi } from './hooks/useVikunjaApi.ts'
-import { useUndoableCompletion } from './hooks/useUndoableCompletion.ts'
+import { useUndoableActions } from './hooks/useUndoableActions.ts'
 import { useDarkMode } from './hooks/useDarkMode.ts'
 import { useTaskDragAndDrop } from './hooks/useTaskDragAndDrop.ts'
 import { usePullToRefresh } from './hooks/usePullToRefresh.ts'
@@ -17,6 +17,7 @@ import TaskItem from './components/TaskItem.tsx'
 import TaskSubtreePreview from './components/TaskSubtreePreview.tsx'
 import TaskComposer from './components/TaskComposer.tsx'
 import UnlabelConfirmDialog from './components/UnlabelConfirmDialog.tsx'
+import DeleteConfirmDialog from './components/DeleteConfirmDialog.tsx'
 import FAB from './components/FAB.tsx'
 import { composerReducer, initialComposerState } from './utils/composerState.ts'
 import {
@@ -34,7 +35,17 @@ import {
   type ParentScope,
 } from './utils/taskTree.ts'
 import { countDescendants, planUnlabel, type UnlabelDecision } from './utils/unlabel.ts'
+import { planDelete, type DeleteDecision, type DeleteScope } from './utils/delete.ts'
 import { HONEYDO_LABEL, DEFAULT_PROJECT_ID } from './config.ts'
+
+function findNode(nodes: TaskTreeNode[], id: number): TaskTreeNode | null {
+  for (const node of nodes) {
+    if (node.id === id) return node
+    const child = findNode(node.children, id)
+    if (child) return child
+  }
+  return null
+}
 
 export default function App() {
   const {
@@ -45,6 +56,7 @@ export default function App() {
     fetchTasks,
     createTask,
     createSubtask,
+    deleteTask,
     updateTask,
     persistTaskOrdering,
     changeTaskParent,
@@ -59,6 +71,7 @@ export default function App() {
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set())
   const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null)
   const [unlabelRequest, setUnlabelRequest] = useState<{ taskId: number; busy: boolean } | null>(null)
+  const [deleteRequest, setDeleteRequest] = useState<number | null>(null)
   const createdPositionsRef = useRef(new Map<number, { parentId: number | null; position: number }>())
   const [composerState, composerDispatch] = useReducer(composerReducer, initialComposerState)
 
@@ -80,11 +93,39 @@ export default function App() {
     fetchTasks().catch(() => {})
   }, [fetchTasks])
 
+  const byId = useMemo<Map<number, import('./types/vikunja.ts').VikunjaTask>>(() => {
+    const m = new Map<number, import('./types/vikunja.ts').VikunjaTask>()
+    for (const t of tasks) m.set(t.id, t)
+    return m
+  }, [tasks])
+
+  // Stable handlers
+  const {
+    handleToggleDone,
+    handleUpdateTitle,
+    handleDelete,
+    undo,
+    notify,
+    toast,
+    pendingDeleteIds,
+    toastHandlers,
+  } = useUndoableActions({ byId, updateTask, deleteTask, refresh: fetchTasks })
+
+  // Tasks hidden behind a pending delete stay out of the tree — including
+  // through refetches — until the server deletes settle, so Undo can restore
+  // them exactly and a refetch cannot resurrect them before the commit.
+  const activeTasks = useMemo(
+    () => pendingDeleteIds.size === 0
+      ? tasks
+      : tasks.filter((task) => !pendingDeleteIds.has(task.id)),
+    [tasks, pendingDeleteIds]
+  )
+
   // Tree of all Honey-Do-rooted tasks. Children without the Honey-Do label
   // are pulled in transitively via related_tasks.subtask (see useVikunjaApi).
   const taskTree = useMemo<TaskTreeNode[]>(() => {
-    return buildTree(tasks, HONEYDO_LABEL)
-  }, [tasks])
+    return buildTree(activeTasks, HONEYDO_LABEL)
+  }, [activeTasks])
 
   // Hidden ancestor ids: any node whose ancestor is `done && !showCompleted`
   // (i.e. the show-done toggle is off and an ancestor was marked done).
@@ -101,22 +142,6 @@ export default function App() {
     for (const r of taskTree) visit(r, false)
     return hidden
   }, [taskTree, showCompleted])
-
-  const byId = useMemo<Map<number, import('./types/vikunja.ts').VikunjaTask>>(() => {
-    const m = new Map<number, import('./types/vikunja.ts').VikunjaTask>()
-    for (const t of tasks) m.set(t.id, t)
-    return m
-  }, [tasks])
-
-  // Stable handlers
-  const {
-    handleToggleDone,
-    handleUpdateTitle,
-    undo,
-    notify,
-    toast,
-    toastHandlers,
-  } = useUndoableCompletion({ byId, updateTask })
 
   const handleAddSubtask = useCallback((parentId: number) => {
     setCollapsed((previous) => {
@@ -152,16 +177,7 @@ export default function App() {
   }, [])
 
   const unlabelNode = useMemo<TaskTreeNode | null>(() => {
-    if (unlabelRequest === null) return null
-    const find = (nodes: TaskTreeNode[]): TaskTreeNode | null => {
-      for (const node of nodes) {
-        if (node.id === unlabelRequest.taskId) return node
-        const child = find(node.children)
-        if (child) return child
-      }
-      return null
-    }
-    return find(taskTree)
+    return unlabelRequest === null ? null : findNode(taskTree, unlabelRequest.taskId)
   }, [unlabelRequest, taskTree])
 
   const handleUnlabelOpen = useCallback((taskId: number) => {
@@ -196,6 +212,34 @@ export default function App() {
       setUnlabelRequest(null)
     }
   }, [unlabelNode, unlabelRequest, removeFromHoneyDo, notify])
+
+  const deleteNode = useMemo<TaskTreeNode | null>(() => {
+    return deleteRequest === null ? null : findNode(taskTree, deleteRequest)
+  }, [deleteRequest, taskTree])
+
+  const executeDelete = useCallback((node: TaskTreeNode, scope: DeleteScope) => {
+    const plan = planDelete({ type: 'confirm', scope }, node)
+    if (plan) handleDelete(plan)
+  }, [handleDelete])
+
+  const handleDeleteOpen = useCallback((taskId: number) => {
+    setOpenTaskMenuId(null)
+    const node = findNode(taskTree, taskId)
+    if (!node) return
+    if (countDescendants(node) === 0) {
+      // Leaf tasks skip the dialog; the undo toast is the recovery affordance.
+      executeDelete(node, 'task')
+      return
+    }
+    setDeleteRequest(taskId)
+  }, [taskTree, executeDelete])
+
+  const handleDeleteDecision = useCallback((decision: DeleteDecision) => {
+    const node = deleteNode
+    setDeleteRequest(null)
+    if (decision.type === 'cancel' || !node) return
+    executeDelete(node, decision.scope)
+  }, [deleteNode, executeDelete])
 
   const handleCreateTask = useCallback(
     async (title: string, placement: import('./utils/composerState.ts').ComposerPlacement) => {
@@ -291,7 +335,7 @@ export default function App() {
   )
 
   const dragAndDrop = useTaskDragAndDrop({
-    tasks,
+    tasks: activeTasks,
     taskTree,
     collapsed,
     setCollapsed,
@@ -390,6 +434,7 @@ export default function App() {
                 onUpdateTitle={handleUpdateTitle}
                 onAddSubtask={handleAddSubtask}
                 onUnlabel={handleUnlabelOpen}
+                onDelete={handleDeleteOpen}
                 isHoneyDoLabeled={Boolean(node.labels?.some((label) => label.title === HONEYDO_LABEL))}
                 menuOpen={openTaskMenuId === node.id}
                 onMenuOpenChange={handleMenuOpenChange}
@@ -531,6 +576,17 @@ export default function App() {
           onCancel={() => handleUnlabelDecision({ type: 'cancel' })}
           onConfirm={(scope) => handleUnlabelDecision({ type: 'confirm', scope })}
           returnFocusSelector={`[data-task-id="${unlabelRequest.taskId}"] button[aria-label="Task actions"]`}
+        />
+      )}
+
+      {deleteRequest !== null && deleteNode && (
+        <DeleteConfirmDialog
+          taskTitle={deleteNode.title}
+          descendantCount={countDescendants(deleteNode)}
+          busy={false}
+          onCancel={() => handleDeleteDecision({ type: 'cancel' })}
+          onConfirm={(scope) => handleDeleteDecision({ type: 'confirm', scope })}
+          returnFocusSelector={`[data-task-id="${deleteRequest}"] button[aria-label="Task actions"]`}
         />
       )}
 

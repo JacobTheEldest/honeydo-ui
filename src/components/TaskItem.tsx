@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef, type SyntheticEvent } from 'r
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useDrag } from '@use-gesture/react'
-import { ExternalLink, Check, GripVertical, ChevronRight, ChevronDown, MoreHorizontal, Plus, Tag } from 'lucide-react'
+import { ExternalLink, Check, GripVertical, ChevronRight, ChevronDown, MoreHorizontal, Plus, Tag, Trash2 } from 'lucide-react'
 import { VIKUNJA_BASE_URL } from '../config.ts'
 import { startedOnDragHandle } from '../utils/gestureOrigin.ts'
 import type { VikunjaTask } from '../types/vikunja.ts'
@@ -19,6 +19,7 @@ interface TaskItemProps {
   onUpdateTitle: (id: number, title: string) => void
   onAddSubtask: (taskId: number) => void
   onUnlabel: (taskId: number) => void
+  onDelete: (taskId: number) => void
   /** True when this task itself carries the Honey-Do label. */
   isHoneyDoLabeled: boolean
   menuOpen: boolean
@@ -41,6 +42,7 @@ export default function TaskItem({
   onUpdateTitle,
   onAddSubtask,
   onUnlabel,
+  onDelete,
   isHoneyDoLabeled,
   menuOpen,
   onMenuOpenChange,
@@ -318,6 +320,16 @@ export default function TaskItem({
                 >
                   <ExternalLink className="h-4 w-4" /> Open in Vikunja
                 </a>
+                <div className="mt-1 border-t border-gray-100 pt-1 dark:border-gray-700">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { onMenuOpenChange(task.id, false); onDelete(task.id) }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-gray-50 dark:text-red-400 dark:hover:bg-gray-700"
+                  >
+                    <Trash2 className="h-4 w-4" /> Delete
+                  </button>
+                </div>
               </div>
             )}
           </div>
