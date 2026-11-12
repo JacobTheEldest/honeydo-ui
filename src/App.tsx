@@ -540,7 +540,7 @@ export default function App() {
           aria-live="polite"
           data-toast
           {...toastHandlers}
-          className="fixed bottom-20 left-1/2 z-50 -translate-x-1/2 flex items-center gap-3 rounded-lg bg-gray-900 px-4 py-2 text-sm text-white shadow-lg dark:bg-gray-100 dark:text-gray-900 max-w-[calc(100vw-2rem)]"
+          className="fixed bottom-20 left-1/2 z-50 -translate-x-1/2 flex items-center gap-3 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-800 shadow-lg dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 max-w-[calc(100vw-2rem)]"
         >
           <span>{toast.message}</span>
           {toast.undoTaskId !== undefined && (
@@ -549,7 +549,7 @@ export default function App() {
               onClick={() => {
                 if (toast.undoTaskId !== undefined) undo(toast.undoTaskId)
               }}
-              className="shrink-0 rounded font-semibold text-amber-300 hover:text-amber-200 dark:text-amber-600 dark:hover:text-amber-700"
+              className="shrink-0 min-h-11 rounded-lg bg-honey px-4 py-2.5 text-sm font-semibold text-white hover:bg-honey-dark focus-visible:ring-2 focus-visible:ring-honey-dark focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-800"
             >
               Undo
             </button>

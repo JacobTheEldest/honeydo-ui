@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import type { APIRequestContext, Page } from '@playwright/test'
+import type { APIRequestContext, Locator, Page } from '@playwright/test'
 
 test.beforeEach(async ({ request }) => {
   const response = await request.post('/api/v1/test-reset')
@@ -24,6 +24,20 @@ async function visibleRootIds(page: Page) {
       )
       .map((row) => row.getAttribute('data-task-id'))
   )
+}
+
+// Tailwind v4 serializes its palette as oklch(), which getComputedStyle
+// preserves verbatim. Render the computed color into a canvas pixel and read
+// the sRGB values back: that normalizes any color notation to #rrggbb.
+async function computedHex(target: Locator, property: string) {
+  return target.evaluate((el, prop) => {
+    const ctx = document.createElement('canvas').getContext('2d')
+    if (!ctx) throw new Error('no 2d canvas context')
+    ctx.fillStyle = getComputedStyle(el).getPropertyValue(prop)
+    ctx.fillRect(0, 0, 1, 1)
+    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
+    return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`
+  }, property)
 }
 
 async function flickRowLeft(page: Page, taskId: number, title: string) {
@@ -64,7 +78,8 @@ test('completing via checkbox shows an undo toast that restores the task in plac
   await expect(page.locator('[data-task-id="1"]')).toBeHidden()
   await expect.poll(async () => serverDone(request, 1)).toBe(true)
 
-  await toast.getByRole('button', { name: 'Undo' }).click()
+  // The whole pill is the hit area: activate from its corner, off the text.
+  await toast.getByRole('button', { name: 'Undo' }).click({ position: { x: 3, y: 3 } })
 
   await expect(page.locator('[data-task-id="1"]')).toBeVisible()
   await expect(
@@ -176,4 +191,46 @@ test('hovering the toast pauses the undo timer until the pointer leaves', async 
   await page.mouse.move(0, 0)
   // The unexpired remainder runs out after the pointer leaves.
   await expect(toast).toBeHidden({ timeout: 8000 })
+})
+
+test('the toast follows the app theme and Undo reads as a button', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('[data-task-id="1"]')).toBeVisible()
+
+  // Dark is the app's default theme (useDarkMode): the toast must use the
+  // same dark surface palette as the task rows instead of an inverted card.
+  await page.locator('[data-task-id="1"] button[aria-label="Mark complete"]').click()
+  const toast = page.locator('[data-toast]')
+  await expect(toast).toBeVisible()
+  // Pause the undo timer on the message text (not the button) while asserting.
+  await toast.locator('span').hover()
+
+  // The task row content layer and title carry the app's surface/text palette.
+  // Compare computed style to computed style so Tailwind's oklch() color
+  // serialization cannot skew the comparison.
+  const surface = page.locator('[data-task-id="2"] [data-drag-handle]').locator('..')
+  const bodyText = page.locator('[data-task-id="2"] button', { hasText: 'Root B' })
+  expect(await computedHex(toast, 'background-color')).toBe(
+    await computedHex(surface, 'background-color')
+  )
+  expect(await computedHex(toast, 'color')).toBe(await computedHex(bodyText, 'color'))
+
+  // Undo reads as an app action button: the FAB's accent fill, rounded, 44px+.
+  const undo = toast.getByRole('button', { name: 'Undo' })
+  const fab = page.locator('[data-composer-toggle]')
+  expect(await computedHex(undo, 'background-color')).toBe(
+    await computedHex(fab, 'background-color')
+  )
+  expect(await computedHex(undo, 'color')).toBe(await computedHex(fab, 'color'))
+  await expect(undo).toHaveCSS('border-radius', '8px')
+  const undoBox = await undo.boundingBox()
+  expect(undoBox, 'Undo button should be measurable').not.toBeNull()
+  if (undoBox) expect(undoBox.height).toBeGreaterThanOrEqual(44)
+
+  // Light mode gets the light palette from the same elements.
+  await page.getByRole('button', { name: 'Switch to light mode' }).click()
+  expect(await computedHex(toast, 'background-color')).toBe(
+    await computedHex(surface, 'background-color')
+  )
+  expect(await computedHex(toast, 'color')).toBe(await computedHex(bodyText, 'color'))
 })
