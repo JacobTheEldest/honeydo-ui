@@ -4,9 +4,18 @@ import { HONEYDO_LABEL } from '../config.ts'
 import { applyParentChangeToTasks, applyParentChange, type ParentChange } from '../utils/hierarchyMutations.ts'
 import { applyUnlabel, type UnlabelPlan } from '../utils/unlabel.ts'
 
-const API_BASE = '/api/v1'
+const API_BASE = '/api/v2'
 const DETAIL_CONCURRENCY = 8
 const MAX_SUBTASK_DEPTH = 8
+
+/** v2 list responses wrap rows in a pagination envelope. */
+interface Paginated<T> {
+  items: T[] | null
+  total: number
+  page: number
+  per_page: number
+  total_pages: number
+}
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -37,22 +46,10 @@ async function apiRequest(path: string, options?: RequestInit): Promise<void> {
   }
 }
 
-/**
- * Vikunja's v1 compatibility API has no trash routes: restore lives on the
- * v2 API only (new endpoints land there since 2.4.0). Same credentials.
- */
-async function apiV2Request(path: string, options?: RequestInit): Promise<void> {
-  const res = await fetch(`/api/v2${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`API v2 ${path} failed: ${res.status} ${text}`)
-  }
+/** Fetch a v2 list endpoint and unwrap its pagination envelope. */
+async function apiList<T>(path: string): Promise<T[]> {
+  const page = await apiFetch<Paginated<T>>(path)
+  return page.items ?? []
 }
 
 /** Run a list of promise-producing functions with a fixed concurrency cap. */
@@ -81,7 +78,7 @@ export function useVikunjaApi() {
   const [error, setError] = useState<string | null>(null)
 
   // Keep the freshest task list in a ref, updated synchronously with state.
-  // updateTask re-bases its full-resource POST body on it so a queued
+  // updateTask re-bases its full-resource PUT body on it so a queued
   // mutation cannot revert fields changed by a write that settled after the
   // mutation's snapshot was captured.
   const tasksRef = useRef<VikunjaTask[]>(tasks)
@@ -97,7 +94,7 @@ export function useVikunjaApi() {
   )
 
   const fetchLabels = useCallback(async () => {
-    const data = await apiFetch<VikunjaLabel[]>('/labels?per_page=200')
+    const data = await apiList<VikunjaLabel>('/labels?per_page=200')
     setLabels(data)
     return data
   }, [])
@@ -169,11 +166,11 @@ export function useVikunjaApi() {
       // Honey-Do tasks can be in any project, so fetch from all projects
       // and deduplicate by ID (system views like Favorites/Prioritized
       // contain the same tasks as real projects).
-      const projects = await apiFetch<{ id: number; title: string }[]>('/projects?per_page=200')
+      const projects = await apiList<{ id: number; title: string }>('/projects?per_page=200')
       const seen = new Map<number, VikunjaTask>()
       for (const p of projects) {
         try {
-          const batch = await apiFetch<VikunjaTask[]>(`/projects/${p.id}/tasks?per_page=200`)
+          const batch = await apiList<VikunjaTask>(`/projects/${p.id}/tasks?per_page=200`)
           for (const t of batch) {
             if (!seen.has(t.id)) seen.set(t.id, t)
           }
@@ -220,7 +217,7 @@ export function useVikunjaApi() {
 
   const createTask = useCallback(async (payload: CreateTaskPayload) => {
     const task = await apiFetch<VikunjaTask>(`/projects/${payload.project_id}/tasks`, {
-      method: 'PUT',
+      method: 'POST',
       body: JSON.stringify(payload),
     })
     setTasksAndRef((prev) => [task, ...prev])
@@ -232,15 +229,15 @@ export function useVikunjaApi() {
     setTasksAndRef((previous) => previous.filter((task) => task.id !== taskId))
   }, [setTasksAndRef])
 
-  /** Un-delete a task from Vikunja's trash (2.8.0+; v2 API only). */
+  /** Un-delete a task from Vikunja's trash (2.8.0+). */
   const restoreTask = useCallback(async (taskId: number) => {
-    await apiV2Request(`/tasks/${taskId}/restore`, { method: 'POST' })
+    await apiRequest(`/tasks/${taskId}/restore`, { method: 'POST' })
   }, [])
 
   /** Re-create one parent -> child subtask relation row. */
   const addSubtaskRelation = useCallback(async (parentId: number, childId: number) => {
     await apiRequest(`/tasks/${parentId}/relations`, {
-      method: 'PUT',
+      method: 'POST',
       body: JSON.stringify({
         task_id: parentId,
         other_task_id: childId,
@@ -251,13 +248,13 @@ export function useVikunjaApi() {
 
   const createSubtask = useCallback(async (payload: CreateTaskPayload, parentId: number) => {
     const task = await apiFetch<VikunjaTask>(`/projects/${payload.project_id}/tasks`, {
-      method: 'PUT',
+      method: 'POST',
       body: JSON.stringify(payload),
     })
     setTasksAndRef((prev) => [task, ...prev])
     try {
       await apiRequest(`/tasks/${parentId}/relations`, {
-        method: 'PUT',
+        method: 'POST',
         body: JSON.stringify({
           task_id: parentId,
           other_task_id: task.id,
@@ -276,10 +273,10 @@ export function useVikunjaApi() {
 
   const updateTaskRaw = useCallback(async (current: VikunjaTask, payload: UpdateTaskPayload) => {
     const task = await apiFetch<VikunjaTask>(`/tasks/${current.id}`, {
-      method: 'POST',
+      method: 'PUT',
       body: JSON.stringify(payload),
     })
-    // POST /tasks/{id} omits labels and relation writes are separate. Merge
+    // PUT /tasks/{id} omits labels and relation writes are separate. Merge
     // into the latest local task, not the request's stale snapshot, so a due-date
     // response cannot undo an optimistic parent change made while it was in flight.
     const merged: VikunjaTask = { ...current, ...task, labels: current.labels }
@@ -296,7 +293,7 @@ export function useVikunjaApi() {
   }, [setTasksAndRef])
 
   /**
-   * Vikunja POST /tasks/{id} replaces the resource. Start from the complete
+   * Vikunja PUT /tasks/{id} replaces the resource. Start from the complete
    * fetched task object so fields not modeled by this UI (priority, dates,
    * repeat settings, etc.) survive due-date/title edits as well. Re-base on
    * the freshest local task so a queued mutation cannot revert fields changed
@@ -329,7 +326,7 @@ export function useVikunjaApi() {
 
   const addLabelToTask = useCallback(async (taskId: number, labelId: number) => {
     await apiFetch(`/tasks/${taskId}/labels`, {
-      method: 'PUT',
+      method: 'POST',
       body: JSON.stringify({ label_id: labelId }),
     })
     // Merge the label into the task in local state so buildTree picks it up
@@ -346,7 +343,7 @@ export function useVikunjaApi() {
   }, [labels, setTasksAndRef])
 
   /**
-   * Delete a label link (the labels array in a task POST body is ignored by
+   * Delete a label link (the labels array in a task write body is ignored by
    * Vikunja) and mirror the removal in local state for immediate rendering.
    */
   const removeLabelFromTask = useCallback(async (taskId: number, labelId: number) => {
@@ -390,7 +387,7 @@ export function useVikunjaApi() {
 
   /**
    * Remove the Honey-Do label and its sorting due_date from each target task.
-   * Vikunja POST /tasks/{id} is a full-resource write, so due-date clearing
+   * Vikunja PUT /tasks/{id} is a full-resource write, so due-date clearing
    * goes through updateTask's read-modify-write of the complete task object.
    * applyUnlabel refetches at the end and reports partial failures.
    */
@@ -408,7 +405,7 @@ export function useVikunjaApi() {
 
   const createLabel = useCallback(async (title: string) => {
     const label = await apiFetch<VikunjaLabel>('/labels', {
-      method: 'PUT',
+      method: 'POST',
       body: JSON.stringify({ title }),
     })
     setLabels(prev => [...prev, label])

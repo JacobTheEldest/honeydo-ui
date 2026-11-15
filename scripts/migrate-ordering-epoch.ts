@@ -20,7 +20,7 @@ import { buildTree, flattenVisible } from '../src/utils/taskTree.ts'
  */
 
 const API_ORIGIN = process.env.HONEYDO_API_URL ?? 'http://127.0.0.1:3000'
-const API_BASE = `${API_ORIGIN.replace(/\/$/, '')}/api/v1`
+const API_BASE = `${API_ORIGIN.replace(/\/$/, '')}/api/v2`
 const HONEYDO_LABEL = process.env.HONEYDO_LABEL ?? 'Honey-Do'
 const DRY_RUN = process.argv.includes('--dry-run')
 const DETAIL_CONCURRENCY = 8
@@ -53,6 +53,21 @@ async function apiRequest(path: string, options?: RequestInit): Promise<void> {
     const text = await res.text()
     throw new Error(`API ${path} failed: ${res.status} ${text}`)
   }
+}
+
+/** v2 list responses wrap rows in a pagination envelope. */
+interface Paginated<T> {
+  items: T[] | null
+  total: number
+  page: number
+  per_page: number
+  total_pages: number
+}
+
+/** Fetch a v2 list endpoint and unwrap its pagination envelope. */
+async function apiList<T>(path: string): Promise<T[]> {
+  const page = await apiFetch<Paginated<T>>(path)
+  return page.items ?? []
 }
 
 /** Run a list of promise-producing functions with a fixed concurrency cap. */
@@ -126,12 +141,12 @@ async function collectSubtaskDetails(
 }
 
 async function main(): Promise<void> {
-  const projects = await apiFetch<{ id: number; title: string }[]>('/projects?per_page=200')
+  const projects = await apiList<{ id: number; title: string }>('/projects?per_page=200')
   const tasks = new Map<number, VikunjaTask>()
 
   for (const project of projects) {
     try {
-      const batch = await apiFetch<VikunjaTask[]>(`/projects/${project.id}/tasks?per_page=200`)
+      const batch = await apiList<VikunjaTask>(`/projects/${project.id}/tasks?per_page=200`)
       for (const task of batch) {
         if (!tasks.has(task.id)) tasks.set(task.id, task)
       }
@@ -192,10 +207,10 @@ async function main(): Promise<void> {
     const task = tasks.get(update.id)
     if (!task) return
     try {
-      // POST /tasks/{id} is a full-resource write; send the complete task so
+      // PUT /tasks/{id} is a full-resource write; send the complete task so
       // fields not modeled by this migration survive.
       await apiRequest(`/tasks/${update.id}`, {
-        method: 'POST',
+        method: 'PUT',
         body: JSON.stringify({ ...task, due_date: update.due_date }),
       })
     } catch (error) {
