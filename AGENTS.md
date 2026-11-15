@@ -15,7 +15,7 @@ npm run build
 npm run lint
 ```
 
-`npm run test:e2e` starts the in-memory mock API on port 3001 and Vite on port 5173; Vite proxies `/api` and `/config.js` to the fixture. The test fixture resets between cases. It uses no API key and must never call the live Vikunja service. The mock records writes and exposes `/api/v1/test-state` for server-authoritative assertions. If a port is occupied, identify the owner and use an explicit alternate port/proxy target rather than killing an unknown process.
+`npm run test:e2e` starts the in-memory mock API on port 3001 and Vite on port 5173; Vite proxies `/api` and `/config.js` to the fixture. The test fixture resets between cases. It uses no API key and must never call the live Vikunja service. The mock records writes and exposes `/api/v2/test-state` for server-authoritative assertions. If a port is occupied, identify the owner and use an explicit alternate port/proxy target rather than killing an unknown process.
 
 Use `npm run dev` only for frontend-only work where API access is not needed. Use `mise run dev` only when deliberately testing the Express proxy against a safe, controlled API endpoint; it is not part of the normal regression loop.
 
@@ -43,6 +43,7 @@ Add a focused regression test for each fixed defect. Prefer extracting determini
 ## Scope and safety
 
 - Never use live Vikunja data for routine tests. For any intentional live mutation, obtain explicit confirmation and use a designated safe task/account.
+- All Vikunja API traffic targets the v2 API (`/api/v2`) with v2 semantics: `POST` creates (201), `PUT` replaces, `PATCH` partial-updates, list responses are `{items, …}` envelopes, deletes return 204 with an empty body. v1 is frozen upstream (deprecated in Vikunja 3.0, removed in 4.0) — never add v1 routes, fixtures, or call sites; `tests/no-v1-api.test.ts` fails the suite on any `api/v1` occurrence. For new endpoints, resolve the route from the instance's own spec (`GET /api/v2/openapi.json`) first — the `vikunja-api` skill holds the contract and authority order.
 - Never put API keys in browser code, source control, logs, screenshots, or test output. The Express proxy keeps credentials server-side.
 - Read the relevant component, hook, API path, and recent diff before changing behavior. State one evidence-based root-cause hypothesis; test it with the smallest change.
 - Keep unrelated cleanup/refactors separate from a bug fix. Do not stage `.worktrees/`; stage explicit paths.
