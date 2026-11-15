@@ -159,8 +159,8 @@ test('a failed save reports an error instead of offering undo', async ({ page, r
   await page.goto('/')
   await expect(page.locator('[data-task-id="1"]')).toBeVisible()
 
-  await page.route('**/api/v1/tasks/1', async (route) => {
-    if (route.request().method() === 'POST') {
+  await page.route('**/api/v2/tasks/1', async (route) => {
+    if (route.request().method() === 'PUT') {
       await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
       return
     }

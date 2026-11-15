@@ -76,7 +76,7 @@ test('deleting a leaf task hides it at once, commits to the trash, and Undo rest
 
   // The delete commits immediately: the task lands in Vikunja's trash.
   await expect.poll(async () => (await deleteRequests(request)).map((entry) => entry.path))
-    .toEqual(['/api/v1/tasks/5'])
+    .toEqual(['/api/v2/tasks/5'])
   expect(await trashedIds(request)).toEqual([5])
 
   await toast.getByRole('button', { name: 'Undo' }).click()
@@ -107,13 +107,13 @@ test('letting the undo window close keeps the delete committed with no second wr
 
   // The delete already landed while the toast was up.
   await expect.poll(async () => (await deleteRequests(request)).map((entry) => entry.path))
-    .toEqual(['/api/v1/tasks/5'])
+    .toEqual(['/api/v2/tasks/5'])
 
   // Do not hover the toast; the 7s undo timer must run out on its own.
   await page.mouse.move(0, 0)
   await expect(toast).toBeHidden({ timeout: 12000 })
   // Window expiry issues no writes: still exactly one delete, still trashed.
-  expect((await deleteRequests(request)).map((entry) => entry.path)).toEqual(['/api/v1/tasks/5'])
+  expect((await deleteRequests(request)).map((entry) => entry.path)).toEqual(['/api/v2/tasks/5'])
   expect(await trashedIds(request)).toEqual([5])
 
   await page.reload()
@@ -157,7 +157,7 @@ test('deleting a parent asks for scope and this-task-only orphans its subtasks',
   await expect(row(page, 12)).toHaveCount(0)
 
   await expect.poll(async () => (await deleteRequests(request)).map((entry) => entry.path))
-    .toEqual(['/api/v1/tasks/1'])
+    .toEqual(['/api/v2/tasks/1'])
 
   // Only the parent was deleted: the subtasks themselves survive in Vikunja.
   // The relation rows survive too (verified live 2.8.0) — hidden from views
@@ -200,7 +200,7 @@ test('undoing a task-only delete restores the parent with its subtask links inta
   expect(await trashedIds(request)).toEqual([])
   expect(
     (await serverState(request)).requests.filter(
-      (entry) => entry.method === 'PUT' && entry.path.includes('/relations'),
+      (entry) => entry.method === 'POST' && entry.path.includes('/relations'),
     ),
   ).toEqual([])
 
@@ -230,7 +230,7 @@ test('deleting a subtree hides it, commits every descendant, and Undo restores i
   // Every descendant is committed to the trash immediately (deepest-first).
   await expect.poll(async () =>
     (await deleteRequests(request)).map((entry) => entry.path).sort()
-  ).toEqual(['/api/v1/tasks/1', '/api/v1/tasks/11', '/api/v1/tasks/12'])
+  ).toEqual(['/api/v2/tasks/1', '/api/v2/tasks/11', '/api/v2/tasks/12'])
   expect(await trashedIds(request)).toEqual([1, 11, 12])
 
   await toast.getByRole('button', { name: 'Undo' }).click()
@@ -246,7 +246,7 @@ test('deleting a subtree hides it, commits every descendant, and Undo restores i
     .toMatchObject({ '11': 1, '12': 1 })
   expect(
     (await serverState(request)).requests.filter(
-      (entry) => entry.method === 'PUT' && entry.path.includes('/relations'),
+      (entry) => entry.method === 'POST' && entry.path.includes('/relations'),
     ),
   ).toEqual([])
   await page.reload()
@@ -283,7 +283,7 @@ test('stacked deletes stay undoable one after another', async ({ page, request }
 test('a failed delete reports an error and the task comes back', async ({ page, request }) => {
   await page.goto('/')
   await expect(row(page, 5)).toBeVisible()
-  await page.route('**/api/v1/tasks/5', async (route) => {
+  await page.route('**/api/v2/tasks/5', async (route) => {
     if (route.request().method() === 'DELETE') {
       await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
       return
@@ -340,7 +340,7 @@ test('the row hides before a held delete settles and a racing undo still restore
   const held = new Promise<void>((resolve) => {
     releaseDelete = resolve
   })
-  await page.route('**/api/v1/tasks/5', async (route) => {
+  await page.route('**/api/v2/tasks/5', async (route) => {
     if (route.request().method() === 'DELETE') {
       await held
       await route.continue()
@@ -374,7 +374,7 @@ test('the row hides before a held delete settles and a racing undo still restore
       present: state.tasks.some((task) => task.id === 5),
     }
   }).toEqual({
-    deletes: ['/api/v1/tasks/5'],
+    deletes: ['/api/v2/tasks/5'],
     restores: ['/api/v2/tasks/5/restore'],
     trashed: [],
     present: true,

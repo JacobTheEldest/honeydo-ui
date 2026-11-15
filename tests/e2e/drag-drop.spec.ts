@@ -98,18 +98,18 @@ test('dragging a root task onto a parent creates and renders the subtask relatio
   let relationArrived!: () => void
   const relationGate = new Promise<void>((resolve) => { releaseRelation = resolve })
   const relationRequestArrived = new Promise<void>((resolve) => { relationArrived = resolve })
-  await page.route('**/api/v1/tasks/1/relations', async (route) => {
-    if (holdRelation && route.request().method() === 'PUT') {
+  await page.route('**/api/v2/tasks/1/relations', async (route) => {
+    if (holdRelation && route.request().method() === 'POST') {
       relationArrived()
       await relationGate
     }
     await route.continue()
   })
   const relationRequest = page.waitForRequest((req) =>
-    req.method() === 'PUT' && req.url().endsWith('/api/v1/tasks/1/relations')
+    req.method() === 'POST' && req.url().endsWith('/api/v2/tasks/1/relations')
   )
   const relationResponse = page.waitForResponse((response) =>
-    response.request().method() === 'PUT' && response.url().endsWith('/api/v1/tasks/1/relations')
+    response.request().method() === 'POST' && response.url().endsWith('/api/v2/tasks/1/relations')
   )
   holdRelation = true
   await dragHandleTo(page, source, {
@@ -154,7 +154,7 @@ test('a long vertical drag onto a parent stays attached to the pointer and persi
   if (!belowBox || !listBox) throw new Error('drop slot or task list has no bounding box')
 
   const relationRequest = page.waitForRequest((req) =>
-    req.method() === 'PUT' && req.url().endsWith('/api/v1/tasks/1/relations')
+    req.method() === 'POST' && req.url().endsWith('/api/v2/tasks/1/relations')
   )
   await dragHandleTo(page, source, {
     x: listBox.x + listBox.width * 0.75,
@@ -247,13 +247,13 @@ test('touch-dragging a handle does not swipe or pull-to-refresh and can nest the
     await expect(page.locator('[data-nest-target]')).toHaveCount(0)
     await expect(page.locator('[data-root-drop-target]')).toHaveCount(0)
     await expect(activeRow).toHaveCSS('opacity', '0')
-    expect(observedRequests.some((entry) => entry.includes('/api/v1/projects')))
+    expect(observedRequests.some((entry) => entry.includes('/api/v2/projects')))
       .toBe(false)
     await expect(activeRow).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')
 
 
     const relationRequest = page.waitForRequest((request) =>
-      request.method() === 'PUT' && request.url().endsWith('/api/v1/tasks/1/relations')
+      request.method() === 'POST' && request.url().endsWith('/api/v2/tasks/1/relations')
     )
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
     await relationRequest
@@ -296,7 +296,7 @@ test('pull-to-refresh remains active from non-handle content', async ({ browser 
     const startY = box.y + box.height / 2
     const touch = (y: number) => ({ x, y, id: 1, radiusX: 2, radiusY: 2, force: 1 })
     const refreshRequest = page.waitForRequest((request) =>
-      request.method() === 'GET' && request.url().includes('/api/v1/projects?per_page=200')
+      request.method() === 'GET' && request.url().includes('/api/v2/projects?per_page=200')
     )
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [touch(startY)] })
     await page.waitForTimeout(260) // use-gesture preventScroll activation delay.
@@ -309,7 +309,7 @@ test('pull-to-refresh remains active from non-handle content', async ({ browser 
     }
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
     await refreshRequest
-    expect(requests.filter((entry) => entry.includes('GET ') && entry.includes('/api/v1/projects?per_page=200')))
+    expect(requests.filter((entry) => entry.includes('GET ') && entry.includes('/api/v2/projects?per_page=200')))
       .toHaveLength(1)
   } finally {
     await context.close()
@@ -332,15 +332,15 @@ test('dragging a root task down by one sibling persists exactly one position', a
   let updateArrived!: () => void
   const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve })
   const updateRequestArrived = new Promise<void>((resolve) => { updateArrived = resolve })
-  await page.route('**/api/v1/tasks/1', async (route) => {
-    if (holdUpdate && route.request().method() === 'POST') {
+  await page.route('**/api/v2/tasks/1', async (route) => {
+    if (holdUpdate && route.request().method() === 'PUT') {
       updateArrived()
       await updateGate
     }
     await route.continue()
   })
   const updateResponse = page.waitForResponse((response) =>
-    response.request().method() === 'POST' && response.url().endsWith('/api/v1/tasks/1')
+    response.request().method() === 'PUT' && response.url().endsWith('/api/v2/tasks/1')
   )
   holdUpdate = true
   await dragHandleTo(page, source, {
@@ -380,7 +380,7 @@ test('dragging a root task down by two siblings persists the full move after rel
   if (!targetBox || !listBox) throw new Error('target row has no bounding box')
 
   const updateResponse = page.waitForResponse((response) =>
-    response.request().method() === 'POST' && response.url().endsWith('/api/v1/tasks/1')
+    response.request().method() === 'PUT' && response.url().endsWith('/api/v2/tasks/1')
   )
   await dragHandleTo(page, source, {
     x: listBox.x + listBox.width * 0.15,
@@ -413,7 +413,7 @@ test('dragging a root task two siblings up persists the full move after reload',
   if (!targetBox || !listBox) throw new Error('target row has no bounding box')
 
   const updateResponse = page.waitForResponse((response) =>
-    response.request().method() === 'POST' && response.url().endsWith('/api/v1/tasks/5')
+    response.request().method() === 'PUT' && response.url().endsWith('/api/v2/tasks/5')
   )
   await dragHandleTo(page, source, {
     x: listBox.x + listBox.width * 0.15,
@@ -553,7 +553,7 @@ test('the left third of the simulated slot promotes a task as a sibling of the r
   let removalArrived!: () => void
   const removalGate = new Promise<void>((resolve) => { releaseRemoval = resolve })
   const removalRequestArrived = new Promise<void>((resolve) => { removalArrived = resolve })
-  await page.route('**/api/v1/tasks/1/relations/subtask/11', async (route) => {
+  await page.route('**/api/v2/tasks/1/relations/subtask/11', async (route) => {
     if (holdRemoval && route.request().method() === 'DELETE') {
       removalArrived()
       await removalGate
@@ -561,10 +561,10 @@ test('the left third of the simulated slot promotes a task as a sibling of the r
     await route.continue()
   })
   const relationRemoval = page.waitForRequest((req) =>
-    req.method() === 'DELETE' && req.url().endsWith('/api/v1/tasks/1/relations/subtask/11')
+    req.method() === 'DELETE' && req.url().endsWith('/api/v2/tasks/1/relations/subtask/11')
   )
   const relationRemovalResponse = page.waitForResponse((response) =>
-    response.request().method() === 'DELETE' && response.url().endsWith('/api/v1/tasks/1/relations/subtask/11')
+    response.request().method() === 'DELETE' && response.url().endsWith('/api/v2/tasks/1/relations/subtask/11')
   )
   holdRemoval = true
   await page.mouse.move(start.x, start.y)
@@ -616,7 +616,7 @@ test('center third places an item as the last sibling of a subtask series', asyn
   if (!aboveBox || !belowBox || !listBox) throw new Error('rows not measurable')
 
   const relationRequest = page.waitForRequest((req) =>
-    req.method() === 'PUT' && req.url().endsWith('/api/v1/tasks/1/relations')
+    req.method() === 'POST' && req.url().endsWith('/api/v2/tasks/1/relations')
   )
   // Drop in the gap below task 12 (last subtask of task 1), center third = sibling of above (task 12)
   await dragHandleTo(page, source, {
