@@ -9,6 +9,7 @@ const trashed = new Map()
 const parents = new Map([[11, 1], [12, 1], [21, 2], [31, 30]])
 const requests = []
 let nextCreatedId = 100
+const DUE_DATE_CLEARED = '0001-01-01T00:00:00Z'
 
 function addTask(id, title, project_id, position, labels = []) {
   tasks.set(id, {
@@ -88,7 +89,8 @@ app.get('/config.js', (_req, res) => {
 })
 // ---------------------------------------------------------------------------
 // Vikunja API v2 surface (the maintained API; v1 is frozen). v2 semantics:
-// POST create -> 201, PUT full update, DELETE -> 204 empty body, list reads
+// POST create -> 201, PATCH JSON Merge Patch partial update, DELETE -> 204
+// empty body, list reads
 // return {items, ...} envelopes, errors are problem+json. Same task/parents/
 // trashed state handling as the live 2.8.0 instance: soft delete into the
 // trash destroys nothing (relation rows survive both directions), restore
@@ -150,12 +152,23 @@ app.post('/api/v2/projects/:id/tasks', (req, res) => {
   tasks.set(id, task)
   res.status(201).json(task)
 })
-app.put('/api/v2/tasks/:id', (req, res) => {
+app.patch('/api/v2/tasks/:id', (req, res) => {
   requests.push({ method: req.method, path: req.path, body: req.body })
   const id = Number(req.params.id)
   const task = tasks.get(id)
   if (!task) return res.status(404).json(problem(404, 'not found'))
-  tasks.set(id, { ...task, ...req.body, labels: task.labels, updated: new Date().toISOString() })
+  // JSON Merge Patch (RFC 7386): apply only the keys present in the body, so
+  // omitted fields survive server-side. A JSON null clears the field; Vikunja
+  // stores a cleared due_date as the zero-time sentinel and returns that
+  // sentinel string rather than null (verified live on 2.8.0). labels and
+  // related_tasks, when present, replace wholesale.
+  const updated = { ...task }
+  for (const [key, value] of Object.entries(req.body ?? {})) {
+    if (value === null && key === 'due_date') updated.due_date = DUE_DATE_CLEARED
+    else updated[key] = value
+  }
+  updated.updated = new Date().toISOString()
+  tasks.set(id, updated)
   res.json(tasks.get(id))
 })
 app.delete('/api/v2/tasks/:id', (req, res) => {

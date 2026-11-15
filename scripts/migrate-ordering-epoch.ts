@@ -207,11 +207,11 @@ async function main(): Promise<void> {
     const task = tasks.get(update.id)
     if (!task) return
     try {
-      // PUT /tasks/{id} is a full-resource write; send the complete task so
-      // fields not modeled by this migration survive.
+      // PATCH /tasks/{id} is a JSON Merge Patch write; sending only due_date
+      // preserves every other field server-side.
       await apiRequest(`/tasks/${update.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ ...task, due_date: update.due_date }),
+        method: 'PATCH',
+        body: JSON.stringify({ due_date: update.due_date }),
       })
     } catch (error) {
       failures.push(`${update.id}: ${error instanceof Error ? error.message : String(error)}`)

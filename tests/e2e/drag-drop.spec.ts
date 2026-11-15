@@ -333,14 +333,14 @@ test('dragging a root task down by one sibling persists exactly one position', a
   const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve })
   const updateRequestArrived = new Promise<void>((resolve) => { updateArrived = resolve })
   await page.route('**/api/v2/tasks/1', async (route) => {
-    if (holdUpdate && route.request().method() === 'PUT') {
+    if (holdUpdate && route.request().method() === 'PATCH') {
       updateArrived()
       await updateGate
     }
     await route.continue()
   })
   const updateResponse = page.waitForResponse((response) =>
-    response.request().method() === 'PUT' && response.url().endsWith('/api/v2/tasks/1')
+    response.request().method() === 'PATCH' && response.url().endsWith('/api/v2/tasks/1')
   )
   holdUpdate = true
   await dragHandleTo(page, source, {
@@ -380,7 +380,7 @@ test('dragging a root task down by two siblings persists the full move after rel
   if (!targetBox || !listBox) throw new Error('target row has no bounding box')
 
   const updateResponse = page.waitForResponse((response) =>
-    response.request().method() === 'PUT' && response.url().endsWith('/api/v2/tasks/1')
+    response.request().method() === 'PATCH' && response.url().endsWith('/api/v2/tasks/1')
   )
   await dragHandleTo(page, source, {
     x: listBox.x + listBox.width * 0.15,
@@ -413,7 +413,7 @@ test('dragging a root task two siblings up persists the full move after reload',
   if (!targetBox || !listBox) throw new Error('target row has no bounding box')
 
   const updateResponse = page.waitForResponse((response) =>
-    response.request().method() === 'PUT' && response.url().endsWith('/api/v2/tasks/5')
+    response.request().method() === 'PATCH' && response.url().endsWith('/api/v2/tasks/5')
   )
   await dragHandleTo(page, source, {
     x: listBox.x + listBox.width * 0.15,

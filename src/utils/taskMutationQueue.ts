@@ -3,11 +3,12 @@ export type TaskMutation = () => Promise<unknown>
 export interface TaskMutationQueue {
   /**
    * Queue a task mutation behind any in-flight mutation for the same task.
-   * Vikunja's task write is a full-resource POST, so concurrent writes to one
-   * task must reach the server in the order the user issued them (e.g. a
-   * complete-then-undo must land as done:false, never done:true). Mutations
-   * for different tasks run independently, and a rejected mutation never
-   * blocks the ones queued behind it.
+   * Task writes are per-field PATCH (JSON Merge Patch) merges, but concurrent
+   * writes to one task must still reach the server in the order the user
+   * issued them (last-write-wins per field: a complete-then-undo must land as
+   * done:false, never done:true). Mutations for different tasks run
+   * independently, and a rejected mutation never blocks the ones queued
+   * behind it.
    */
   enqueue(taskId: number, mutation: TaskMutation): Promise<unknown>
 }

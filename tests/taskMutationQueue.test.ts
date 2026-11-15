@@ -30,8 +30,9 @@ test('serializes mutations for the same task in issue order', async () => {
 })
 
 test('a complete-then-undo on one task settles in issue order', async () => {
-  // Vikunja's task write replaces the resource, so if these two landed out of
-  // order the task would end up done. The queue must keep user order.
+  // Vikunja's task write is a per-field PATCH (last-write-wins on done), so
+  // if these two landed out of order the task would end up done. The queue
+  // must keep user order.
   const queue = createTaskMutationQueue()
   const serverDoneHistory: boolean[] = []
   let releaseComplete!: () => void
