@@ -44,12 +44,9 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
-// API proxy - forward /api/* to Vikunja with the auth header. All app traffic
-// is v2; a legacy v1 passthrough stays mounted through the v1 sunset (3.0
-// deprecation) as rollback safety at zero cost. The legacy prefix is assembled
-// from parts so the zero-v1 guard (tests/no-v1-api.test.ts) can enforce that
-// no code calls the frozen v1 API.
-const legacyV1Prefix = '/api/' + 'v1'
+// API proxy - forward /api/v2/* to Vikunja with the auth header. v2 only:
+// v1 is frozen upstream (deprecated at 3.0, removed at 4.0), and the zero-v1
+// guard (tests/no-v1-api.test.ts) fails the suite on any v1 reference.
 const apiProxy = async (req: express.Request, res: express.Response) => {
   const upstreamUrl = `${upstreamBase}${req.baseUrl}${req.url}`
   const start = Date.now()
@@ -106,7 +103,6 @@ const apiProxy = async (req: express.Request, res: express.Response) => {
   }
 }
 
-app.use(legacyV1Prefix, apiProxy)
 app.use('/api/v2', apiProxy)
 
 // Serve static files
