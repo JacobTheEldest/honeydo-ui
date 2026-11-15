@@ -2,12 +2,12 @@ import { expect, test } from '@playwright/test'
 import type { APIRequestContext, Locator, Page } from '@playwright/test'
 
 test.beforeEach(async ({ request }) => {
-  const response = await request.post('/api/v1/test-reset')
+  const response = await request.post('/api/v2/test-reset')
   expect(response.status()).toBe(204)
 })
 
 async function serverDone(request: APIRequestContext, taskId: number) {
-  const response = await request.get('/api/v1/test-state')
+  const response = await request.get('/api/v2/test-state')
   const state = (await response.json()) as {
     tasks: Array<{ id: number; done: boolean }>
   }

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import type { APIRequestContext, Page } from '@playwright/test'
 
 test.beforeEach(async ({ request }) => {
-  const response = await request.post('/api/v1/test-reset')
+  const response = await request.post('/api/v2/test-reset')
   expect(response.status()).toBe(204)
 })
 
@@ -14,7 +14,7 @@ interface FixtureState {
 }
 
 async function serverState(request: APIRequestContext): Promise<FixtureState> {
-  const response = await request.get('/api/v1/test-state')
+  const response = await request.get('/api/v2/test-state')
   return (await response.json()) as FixtureState
 }
 

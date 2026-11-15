@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import type { Locator } from '@playwright/test'
 
 test.beforeEach(async ({ request }) => {
-  const response = await request.post('/api/v1/test-reset')
+  const response = await request.post('/api/v2/test-reset')
   expect(response.status()).toBe(204)
 })
 

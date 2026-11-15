@@ -77,7 +77,7 @@ async function renderedRootIds(page: Page) {
 }
 
 test.beforeEach(async ({ request }) => {
-  const response = await request.post('/api/v1/test-reset')
+  const response = await request.post('/api/v2/test-reset')
   expect(response.status()).toBe(204)
 })
 
@@ -126,7 +126,7 @@ test('dragging a root task onto a parent creates and renders the subtask relatio
   await relationResponse
 
   await expect.poll(async () => {
-    const response = await request.get('/api/v1/test-state')
+    const response = await request.get('/api/v2/test-state')
     const state = await response.json() as {
       parents: Record<string, number>
       tasks: Array<{ id: number; done: boolean }>
@@ -141,7 +141,7 @@ test('dragging a root task onto a parent creates and renders the subtask relatio
 })
 
 test('a long vertical drag onto a parent stays attached to the pointer and persists nesting', async ({ page, request }) => {
-  const seeded = await request.post('/api/v1/test-seed-long-list')
+  const seeded = await request.post('/api/v2/test-seed-long-list')
   expect(seeded.status()).toBe(201)
   await page.setViewportSize({ width: 1280, height: 2200 })
   await page.goto('/')
@@ -162,7 +162,7 @@ test('a long vertical drag onto a parent stays attached to the pointer and persi
   }, sourceTask, 'child')
   await relationRequest
 
-  const response = await request.get('/api/v1/test-state')
+  const response = await request.get('/api/v2/test-state')
   const state = await response.json() as {
     parents: Record<string, number>
     tasks: Array<{ id: number; done: boolean }>
@@ -258,7 +258,7 @@ test('touch-dragging a handle does not swipe or pull-to-refresh and can nest the
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
     await relationRequest
     await expect.poll(async () => {
-      const response = await page.request.get('http://127.0.0.1:3001/api/v1/test-state')
+      const response = await page.request.get('http://127.0.0.1:3001/api/v2/test-state')
       const state = await response.json() as {
         parents: Record<string, number>
         requests: Array<{ method: string; path: string }>
@@ -359,7 +359,7 @@ test('dragging a root task down by one sibling persists exactly one position', a
   await expect(page.locator('[data-task-id="1"]')).toBeVisible()
   expect((await renderedRootIds(page)).slice(0, 3)).toEqual(['2', '1', '5'])
 
-  const response = await request.get('/api/v1/test-state')
+  const response = await request.get('/api/v2/test-state')
   const state = await response.json() as { tasks: Array<{ id: number; due_date: string | null }> }
   const orderedRoots = state.tasks
     .filter((task) => [1, 2, 5].includes(task.id))
@@ -392,7 +392,7 @@ test('dragging a root task down by two siblings persists the full move after rel
   await expect(page.locator('[data-task-id="1"]')).toBeVisible()
   expect((await renderedRootIds(page)).slice(0, 3)).toEqual(['2', '5', '1'])
 
-  const response = await request.get('/api/v1/test-state')
+  const response = await request.get('/api/v2/test-state')
   const state = await response.json() as { tasks: Array<{ id: number; due_date: string | null }> }
   const orderedRoots = state.tasks
     .filter((task) => [1, 2, 5].includes(task.id))
@@ -425,7 +425,7 @@ test('dragging a root task two siblings up persists the full move after reload',
   await expect(page.locator('[data-task-id="1"]')).toBeVisible()
   expect((await renderedRootIds(page)).slice(0, 3)).toEqual(['5', '1', '2'])
 
-  const response = await request.get('/api/v1/test-state')
+  const response = await request.get('/api/v2/test-state')
   const state = await response.json() as { tasks: Array<{ id: number; due_date: string | null }> }
   const orderedRoots = state.tasks
     .filter((task) => [1, 2, 5].includes(task.id))
@@ -526,7 +526,7 @@ test('Add subtask composer is indented to the level where the created subtask ap
   // and the indent survives a reload.
   await expect
     .poll(async () => {
-      const response = await request.get('/api/v1/test-state')
+      const response = await request.get('/api/v2/test-state')
       const state = (await response.json()) as { parents: Record<string, number> }
       return state.parents['100']
     })
@@ -585,7 +585,7 @@ test('the left third of the simulated slot promotes a task as a sibling of the r
   }
   await relationRemovalResponse
   await expect.poll(async () => {
-    const response = await request.get('/api/v1/test-state')
+    const response = await request.get('/api/v2/test-state')
     const state = await response.json() as {
       parents: Record<string, number>
       tasks: Array<{ id: number; labels: Array<{ title: string }> }>
@@ -630,7 +630,7 @@ test('center third places an item as the last sibling of a subtask series', asyn
 
   await expect(page.locator('[data-task-id="5"]')).toHaveAttribute('data-sortable-id', '1::5')
   await expect.poll(async () => {
-    const state = await (await request.get('/api/v1/test-state')).json() as { parents: Record<string, number> }
+    const state = await (await request.get('/api/v2/test-state')).json() as { parents: Record<string, number> }
     return state.parents['5']
   }).toBe(1)
 

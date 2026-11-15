@@ -22,7 +22,7 @@ export default defineConfig({
   webServer: [
     {
       command: 'node tests/fixtures/mock-vikunja.mjs',
-      url: 'http://127.0.0.1:3001/api/v1/test-state',
+      url: 'http://127.0.0.1:3001/api/v2/test-state',
       env: { PORT: '3001' },
       reuseExistingServer: false,
       timeout: 30_000,

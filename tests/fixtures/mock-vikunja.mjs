@@ -86,71 +86,13 @@ const problem = (status, detail, extra = {}) => ({
 app.get('/config.js', (_req, res) => {
   res.type('application/javascript').send('window.__HONEYDO_CONFIG__ = { VikunjaBaseUrl: "http://localhost:3000", HoneyDoLabel: "Honey-Do", DefaultProjectId: 1 };')
 })
-app.get('/api/v1/labels', (_req, res) => res.json([HONEY_DO]))
-app.get('/api/v1/projects', (_req, res) => res.json([{ id: 1, title: 'Fixture project' }, { id: 2, title: 'Cross-project fixture' }]))
-app.get('/api/v1/projects/:id/tasks', (req, res) => {
-  const projectId = Number(req.params.id)
-  res.json([...tasks.values()].filter((task) => task.project_id === projectId))
-})
-app.get('/api/v1/tasks/:id', (req, res) => {
-  const id = Number(req.params.id)
-  const task = tasks.get(id)
-  if (!task) {
-    // Vikunja 2.8.0: reading a trashed task returns 404 with code 4040 and
-    // trash metadata (verified against a live instance).
-    const trashedTask = trashed.get(id)
-    if (trashedTask) {
-      return res.status(404).json({
-        code: 4040,
-        message: 'This task is in the trash.',
-        details: {
-          id,
-          project_id: trashedTask.project_id,
-          deleted_at: trashedTask.deleted_at,
-          deleted_by: { id: 1, name: '', username: 'fixture', created: date(0), updated: date(0) },
-          can_restore: true,
-        },
-      })
-    }
-    return res.status(404).json({ message: 'not found' })
-  }
-  res.json(detail(task))
-})
-app.put('/api/v1/tasks/:id/relations', (req, res) => {
-  const { task_id: parentId, other_task_id: childId, relation_kind: kind } = req.body
-  if (kind !== 'subtask' || parentId === childId) return res.status(400).json({ message: 'invalid relation' })
-  requests.push({ method: req.method, path: req.path, body: req.body })
-  parents.set(Number(childId), Number(parentId))
-  res.status(200).json({})
-})
-app.delete('/api/v1/tasks/:parentId/relations/subtask/:childId', (req, res) => {
-  requests.push({ method: req.method, path: req.path })
-  const parentId = Number(req.params.parentId)
-  const childId = Number(req.params.childId)
-  if (parents.get(childId) !== parentId) return res.status(404).json({ message: 'relation not found' })
-  parents.delete(childId)
-  res.status(200).json({})
-})
-// Deleting a task is a soft-delete into Vikunja's trash (2.8.0). Relation
-// rows survive the delete (verified live 2026-11-12): they merely disappear
-// from related_tasks views while either endpoint is trashed, and restore
-// re-exposes both directions with no relink needed. Views are built from live
-// tasks only, which reproduces that hiding without touching the rows.
-app.delete('/api/v1/tasks/:id', (req, res) => {
-  requests.push({ method: req.method, path: req.path })
-  const id = Number(req.params.id)
-  const task = tasks.get(id)
-  if (!task) return res.status(404).json({ message: 'not found' })
-  tasks.delete(id)
-  trashed.set(id, { ...task, deleted_at: new Date().toISOString() })
-  res.status(200).json({})
-})
 // ---------------------------------------------------------------------------
 // Vikunja API v2 surface (the maintained API; v1 is frozen). v2 semantics:
 // POST create -> 201, PUT full update, DELETE -> 204 empty body, list reads
 // return {items, ...} envelopes, errors are problem+json. Same task/parents/
-// trashed state handling as the v1 twins: soft delete into the trash destroys
-// nothing (relation rows survive both directions), restore re-exposes them.
+// trashed state handling as the live 2.8.0 instance: soft delete into the
+// trash destroys nothing (relation rows survive both directions), restore
+// re-exposes them.
 // ---------------------------------------------------------------------------
 app.get('/api/v2/labels', (_req, res) => res.json(envelope([HONEY_DO])))
 app.get('/api/v2/projects', (_req, res) =>
@@ -277,63 +219,17 @@ app.delete('/api/v2/tasks/:id/permanent', (req, res) => {
   trashed.delete(id)
   res.status(204).end()
 })
-app.post('/api/v1/tasks/:id', (req, res) => {
-  requests.push({ method: req.method, path: req.path, body: req.body })
-  const id = Number(req.params.id)
-  const task = tasks.get(id)
-  if (!task) return res.status(404).json({ message: 'not found' })
-  tasks.set(id, { ...task, ...req.body, labels: task.labels, updated: new Date().toISOString() })
-  res.json(tasks.get(id))
-})
-app.put('/api/v1/tasks/:id/labels', (req, res) => {
-  requests.push({ method: req.method, path: req.path, body: req.body })
-  const task = tasks.get(Number(req.params.id))
-  if (!task) return res.status(404).json({ message: 'not found' })
-  if (!task.labels.some((label) => label.id === Number(req.body.label_id))) task.labels.push(HONEY_DO)
-  res.status(200).json({})
-})
-app.delete('/api/v1/tasks/:id/labels/:labelId', (req, res) => {
-  requests.push({ method: req.method, path: req.path })
-  const task = tasks.get(Number(req.params.id))
-  if (!task) return res.status(404).json({ message: 'not found' })
-  task.labels = task.labels.filter((label) => label.id !== Number(req.params.labelId))
-  res.status(200).json({})
-})
-// New-task composer support: task creation at a project, plus a deterministic
-// failure trigger ("force-error" title) for exercising the composer's error path.
-app.put('/api/v1/projects/:id/tasks', (req, res) => {
-  requests.push({ method: req.method, path: req.path, body: req.body })
-  if (req.body?.title === 'force-error') {
-    return res.status(500).json({ message: 'forced fixture failure' })
-  }
-  const id = nextCreatedId++
-  const task = {
-    id,
-    title: req.body?.title ?? '',
-    description: '',
-    done: false,
-    done_at: null,
-    due_date: req.body?.due_date ?? null,
-    project_id: Number(req.params.id),
-    labels: [],
-    created: new Date().toISOString(),
-    updated: new Date().toISOString(),
-    priority: 0,
-  }
-  tasks.set(id, task)
-  res.json(task)
-})
-app.post('/api/v1/test-reset', (_req, res) => {
+app.post('/api/v2/test-reset', (_req, res) => {
   resetFixture()
   res.status(204).end()
 })
-app.post('/api/v1/test-seed-long-list', (_req, res) => {
+app.post('/api/v2/test-seed-long-list', (_req, res) => {
   for (let index = 0; index < 20; index++) {
     addTask(3000 + index, `Long-list root ${index + 1}`, 1, 100 + index, [HONEY_DO])
   }
   res.status(201).json({ count: 20 })
 })
-app.get('/api/v1/test-state', (_req, res) => {
+app.get('/api/v2/test-state', (_req, res) => {
   res.json({
     parents: Object.fromEntries(parents),
     tasks: [...tasks.values()],
