@@ -3,6 +3,12 @@ export interface VikunjaLabel {
   title: string
 }
 
+export interface VikunjaUser {
+  id: number
+  username: string
+  name: string | null
+}
+
 export interface VikunjaRelatedTaskRef {
   id: number
   title: string
@@ -24,6 +30,7 @@ export interface VikunjaTask {
   due_date: string | null
   project_id: number
   labels: VikunjaLabel[]
+  assignees: VikunjaUser[]
   created: string
   updated: string
   related_tasks?: VikunjaRelatedTasks
@@ -41,4 +48,8 @@ export interface UpdateTaskPayload {
   due_date?: string | null
   project_id?: number
   description?: string
+}
+
+export interface AssignUserPayload {
+  user_id: number
 }

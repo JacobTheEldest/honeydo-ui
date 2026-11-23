@@ -34,7 +34,7 @@ export default function DeleteConfirmDialog({
       defaultScope="task"
       description="The task is deleted from Vikunja. You can undo from the message that appears right
         after. Deleting only this task leaves its subtasks in Vikunja without a parent;
-        subtasks without their own Honey-Do label may disappear from this view."
+        subtasks not assigned to the selected user may disappear from this view."
       confirmLabel="Delete"
       busy={busy}
       onCancel={onCancel}

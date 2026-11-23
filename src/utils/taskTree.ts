@@ -60,23 +60,26 @@ function getFirstParent(task: VikunjaTask): { id: number; title: string } | null
 }
 
 /**
- * Build the Honey-Do forest. Unlabeled descendants remain in a visible
- * Honey-Do subtree, but a labeled task whose parent is outside that forest is
- * surfaced as a contextual pseudo-root instead of disappearing or making its
- * unlabeled parent look like a prioritized Honey-Do item.
+ * Build the Honey-Do forest. Tasks assigned to the given user are roots.
+ * Unassigned descendants remain in a visible subtree under an assigned parent,
+ * but an assigned task whose parent is outside that forest is surfaced as a
+ * contextual pseudo-root instead of disappearing or making its unassigned
+ * parent look like a prioritized Honey-Do item.
  */
 export function buildTree(
   flat: VikunjaTask[],
-  honeyDoLabel: string
+  assigneeId: number | undefined
 ): TaskTreeNode[] {
   if (flat.length === 0) return []
 
   const byId = new Map<number, VikunjaTask>()
   for (const task of flat) byId.set(task.id, task)
 
-  const honeyDoIds = new Set<number>()
-  for (const task of flat) {
-    if (task.labels?.some((label) => label.title === honeyDoLabel)) honeyDoIds.add(task.id)
+  const assignedIds = new Set<number>()
+  if (assigneeId !== undefined) {
+    for (const task of flat) {
+      if (task.assignees?.some((a) => a.id === assigneeId)) assignedIds.add(task.id)
+    }
   }
 
   const declaredParentOf = new Map<number, number>()
@@ -128,20 +131,20 @@ export function buildTree(
   // Genuine roots must have no parent relation, not merely a parent omitted
   // from this fetch. The latter are handled below with explicit context.
   for (const task of flat) {
-    if (getFirstParent(task) || !honeyDoIds.has(task.id)) continue
+    if (getFirstParent(task) || !assignedIds.has(task.id)) continue
     const node = nodes.get(task.id)
     if (!node) continue
     attachChildren(node, 0, new Set())
     roots.push(node)
   }
 
-  // Add labeled tasks disconnected from the Honey-Do forest. Prefer the
-  // highest labeled task under an omitted/unlabeled ancestor so its labeled
+  // Add assigned tasks disconnected from the Honey-Do forest. Prefer the
+  // highest assigned task under an omitted/unassigned ancestor so its assigned
   // descendants stay attached beneath it.
   const contextualRoots = flat.filter((task) => {
-    if (!honeyDoIds.has(task.id) || attached.has(task.id)) return false
+    if (!assignedIds.has(task.id) || attached.has(task.id)) return false
     const parent = getFirstParent(task)
-    return parent !== null && !honeyDoIds.has(parent.id)
+    return parent !== null && !assignedIds.has(parent.id)
   })
   for (const task of contextualRoots) {
     if (attached.has(task.id)) continue

@@ -21,7 +21,7 @@ import { buildTree, flattenVisible } from '../src/utils/taskTree.ts'
 
 const API_ORIGIN = process.env.HONEYDO_API_URL ?? 'http://127.0.0.1:3000'
 const API_BASE = `${API_ORIGIN.replace(/\/$/, '')}/api/v2`
-const HONEYDO_LABEL = process.env.HONEYDO_LABEL ?? 'Honey-Do'
+const HONEYDO_ASSIGNEE_ID = process.env.HONEYDO_ASSIGNEE_ID ? Number(process.env.HONEYDO_ASSIGNEE_ID) : undefined
 const DRY_RUN = process.argv.includes('--dry-run')
 const DETAIL_CONCURRENCY = 8
 const MAX_SUBTASK_DEPTH = 8
@@ -157,7 +157,7 @@ async function main(): Promise<void> {
 
   const allTasks = Array.from(tasks.values())
   const honeyDoIds = allTasks
-    .filter((task) => task.labels?.some((label) => label.title === HONEYDO_LABEL))
+    .filter((task) => task.assignees?.some((a) => a.id === HONEYDO_ASSIGNEE_ID))
     .map((task) => task.id)
 
   // Fetch details for every Honey-Do-labeled task so we get related_tasks
@@ -184,7 +184,7 @@ async function main(): Promise<void> {
 
   // buildTree reconstructs the exact forest rendered by the app; flattenVisible
   // yields every task whose due_date is used for ordering.
-  const roots = buildTree(Array.from(tasks.values()), HONEYDO_LABEL)
+  const roots = buildTree(Array.from(tasks.values()), HONEYDO_ASSIGNEE_ID)
   const forest = flattenVisible(roots, new Set<number>())
 
   const updates: Array<{ id: number; due_date: string }> = []

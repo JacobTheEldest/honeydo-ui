@@ -16,7 +16,6 @@ import {
 } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import type { VikunjaTask } from '../types/vikunja.ts'
-import { HONEYDO_LABEL } from '../config.ts'
 import type { ComposerEvent } from '../utils/composerState.ts'
 import type { ParentChange } from '../utils/hierarchyMutations.ts'
 import {
@@ -58,7 +57,7 @@ interface UseTaskDragAndDropOptions {
   collapsed: Set<number>
   setCollapsed: Dispatch<SetStateAction<Set<number>>>
   composerDispatch: Dispatch<ComposerEvent>
-  honeyDoLabelId: number | null
+  assigneeId: number | undefined
   persistTaskOrdering: (updates: Array<{ task: VikunjaTask; due_date: string }>) => Promise<void>
   changeTaskParent: (change: ParentChange) => Promise<void>
   notify: (message: string) => void
@@ -79,7 +78,7 @@ export function useTaskDragAndDrop({
   collapsed,
   setCollapsed,
   composerDispatch,
-  honeyDoLabelId,
+  assigneeId,
   persistTaskOrdering,
   changeTaskParent,
   notify,
@@ -284,7 +283,7 @@ export function useTaskDragAndDrop({
         const oldParentIds = activeNode?.related_tasks?.parenttask?.map((p) => p.id) ?? []
         const oldParentId = oldParentIds[0] ?? null
         if (activeNode && parentId === null && oldParentId !== null &&
-          (oldParentIds.length !== 1 || !canPromoteToRoot(activeNode, byId.get(oldParentId), HONEYDO_LABEL) || honeyDoLabelId === null)) {
+          (oldParentIds.length !== 1 || !canPromoteToRoot(activeNode, byId.get(oldParentId), assigneeId) || assigneeId === undefined)) {
           setPreview(null); return
         }
         nextPreview = {
@@ -304,7 +303,7 @@ export function useTaskDragAndDrop({
         const oldParentIds = activeNode?.related_tasks?.parenttask?.map((p) => p.id) ?? []
         const oldParentId = oldParentIds[0] ?? null
         if (activeNode && parentId === null && oldParentId !== null &&
-          (oldParentIds.length !== 1 || !canPromoteToRoot(activeNode, byId.get(oldParentId), HONEYDO_LABEL) || honeyDoLabelId === null)) {
+          (oldParentIds.length !== 1 || !canPromoteToRoot(activeNode, byId.get(oldParentId), assigneeId) || assigneeId === undefined)) {
           setPreview(null); return
         }
         nextPreview = {
@@ -317,7 +316,7 @@ export function useTaskDragAndDrop({
       }
     }
     setPreview(nextPreview)
-  }, [byId, honeyDoLabelId, taskTree])
+  }, [byId, assigneeId, taskTree])
 
   const updateExpansionTarget = useCallback(() => {
     const parentId = dropPreviewRef.current?.mode === 'child' ? dropPreviewRef.current.parentId : null
@@ -438,18 +437,18 @@ export function useTaskDragAndDrop({
         notify('A task with multiple parents cannot be moved this way.')
         return
       }
-      let labelIdToAdd: number | undefined
+      let assigneeIdToAdd: number | undefined
       if (preview.parentId === null && oldParentId !== null) {
         const parent = byId.get(oldParentId)
-        if (!canPromoteToRoot(task, parent, HONEYDO_LABEL)) {
-          notify('This task can only be promoted when its direct parent is a Honey-Do task.')
+        if (!canPromoteToRoot(task, parent, assigneeId)) {
+          notify('This task can only be promoted when its direct parent is assigned to the selected user.')
           return
         }
-        if (honeyDoLabelId === null) {
-          notify('The Honey-Do label is unavailable. Refresh the task list and try again.')
+        if (assigneeId === undefined) {
+          notify('No user is selected. Select a user and try again.')
           return
         }
-        if (!task.labels?.some((label) => label.id === honeyDoLabelId)) labelIdToAdd = honeyDoLabelId
+        if (!task.assignees?.some((a) => a.id === assigneeId)) assigneeIdToAdd = assigneeId
       }
 
       const siblings = preview.parentId === null ? taskTree : findNode(taskTree, preview.parentId)?.children ?? []
@@ -481,7 +480,7 @@ export function useTaskDragAndDrop({
         newParentId: preview.parentId,
         oldDueDate: task.due_date,
         newDueDate: positionToDueDate(newPosition),
-        labelIdToAdd,
+        assigneeIdToAdd,
       }).then(() => {
         if (preview.mode === 'child' && preview.parentId !== null) {
           setCollapsed((previous) => {
@@ -539,7 +538,7 @@ export function useTaskDragAndDrop({
     changeTaskParent,
     composerDispatch,
     groupBySortableId,
-    honeyDoLabelId,
+    assigneeId,
     notify,
     persistTaskOrdering,
     setCollapsed,

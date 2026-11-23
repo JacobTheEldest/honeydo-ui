@@ -382,7 +382,7 @@ test('the row hides before a held delete settles and a racing undo still restore
   await expect(row(page, 5)).toBeVisible()
 })
 
-test('the Unlabel dialog still opens with scope options and cancels without writes', async ({
+test('the Unassign dialog still opens with scope options and cancels without writes', async ({
   page,
   request,
 }) => {
@@ -390,10 +390,10 @@ test('the Unlabel dialog still opens with scope options and cancels without writ
   await expect(row(page, 1)).toBeVisible()
 
   await openTaskMenu(page, 1)
-  await row(page, 1).getByRole('menuitem', { name: 'Unlabel' }).click()
+  await row(page, 1).getByRole('menuitem', { name: 'Unassign' }).click()
 
   const dialog = page.getByRole('dialog')
-  await expect(dialog).toContainText('Remove from Honey-Do?')
+  await expect(dialog).toContainText('Unassign task?')
   await expect(dialog.getByRole('radio', { name: 'This task only' })).toBeVisible()
   await expect(dialog.getByRole('radio', { name: 'This task and all subtasks (2)' })).toBeVisible()
 

@@ -5,13 +5,14 @@ import { buildTree } from '../src/utils/taskTree.ts'
 import { positionToDueDate } from '../src/utils/ordering.ts'
 
 const orderDate = positionToDueDate
+const JACOB = { id: 1, username: 'jacob', name: 'Jacob' }
 
 function makeTask(
   id: number,
   title: string,
   position: number,
   related_tasks: VikunjaTask['related_tasks'] = {},
-  root = false
+  assigned = false
 ): VikunjaTask {
   return {
     id,
@@ -21,7 +22,8 @@ function makeTask(
     done_at: null,
     due_date: orderDate(position),
     project_id: 1,
-    labels: root ? [{ id: 1, title: 'Honey-Do' }] : [],
+    labels: [],
+    assignees: assigned ? [JACOB] : [],
     created: orderDate(0),
     updated: orderDate(0),
     related_tasks,
@@ -43,7 +45,7 @@ test('buildTree uses persisted due_date positions for root and child sibling ord
     makeTask(13, 'Child C', 30, { parenttask: [{ id: 1, title: 'Parent' }] }),
   ]
 
-  const tree = buildTree(flat, 'Honey-Do')
+  const tree = buildTree(flat, 1)
 
   assert.deepEqual(tree.map((root) => root.id), [3, 1, 2])
   assert.deepEqual(tree[1].children.map((child) => child.id), [12, 13, 11])
@@ -61,32 +63,38 @@ test('a stale parent subtask reference cannot render one child under two parents
     child,
   ]
 
-  const tree = buildTree(flat, 'Honey-Do')
+  const tree = buildTree(flat, 1)
 
   assert.deepEqual(tree[0].children, [])
   assert.deepEqual(tree[1].children.map((node) => node.id), [40])
 })
 
-test('labeled child of an unlabeled task outside the Honey-Do tree is shown with parent context', () => {
+test('assigned child of an unassigned task outside the Honey-Do tree is shown with parent context', () => {
   const flat = [
     makeTask(20, 'Hidden parent', 10, { subtask: [{ id: 21, title: 'Prioritized child' }] }),
     makeTask(21, 'Prioritized child', 20, { parenttask: [{ id: 20, title: 'Hidden parent' }] }, true),
   ]
 
-  const tree = buildTree(flat, 'Honey-Do')
+  const tree = buildTree(flat, 1)
 
   assert.deepEqual(tree.map((node) => node.id), [21])
   assert.equal(tree[0].parentContext, 'Subtask of: Hidden parent')
   assert.deepEqual(tree[0].children, [])
 })
 
-test('labeled child with an omitted parent remains visible with the relation title as context', () => {
+test('assigned child with an omitted parent remains visible with the relation title as context', () => {
   const child = makeTask(31, 'Visible child', 10, {
     parenttask: [{ id: 30, title: 'Parent not fetched' }],
   }, true)
 
-  const tree = buildTree([child], 'Honey-Do')
+  const tree = buildTree([child], 1)
 
   assert.equal(tree.length, 1)
   assert.equal(tree[0].parentContext, 'Subtask of: Parent not fetched')
+})
+
+test('buildTree with no assignee returns an empty forest', () => {
+  const flat = [makeTask(1, 'Root A', 10, {}, true)]
+  const tree = buildTree(flat, undefined)
+  assert.deepEqual(tree, [])
 })

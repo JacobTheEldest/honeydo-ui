@@ -588,10 +588,10 @@ test('the left third of the simulated slot promotes a task as a sibling of the r
     const response = await request.get('/api/v2/test-state')
     const state = await response.json() as {
       parents: Record<string, number>
-      tasks: Array<{ id: number; labels: Array<{ title: string }> }>
+      tasks: Array<{ id: number; assignees: Array<{ id: number }> }>
     }
     expect(state.parents['11']).toBeUndefined()
-    return state.tasks.find((task) => task.id === 11)?.labels.some((label) => label.title === 'Honey-Do')
+    return state.tasks.find((task) => task.id === 11)?.assignees.some((assignee) => assignee.id === 1)
   }).toBe(true)
   await expect(page.locator('[data-task-id="11"]')).toHaveAttribute('data-sortable-id', 'r::11')
   await page.reload()

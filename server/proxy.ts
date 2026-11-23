@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
 const PORT = Number(process.env.PORT) || 3000
 const VIKUNJA_BASE_URL = process.env.VIKUNJA_BASE_URL || 'https://vikunja.jacobsteward.me'
-const HONEYDO_LABEL = process.env.HONEYDO_LABEL || 'Honey-Do'
+const HONEYDO_ASSIGNEE_ID = process.env.HONEYDO_ASSIGNEE_ID ? Number(process.env.HONEYDO_ASSIGNEE_ID) : undefined
 const DEFAULT_PROJECT_ID = Number(process.env.DEFAULT_PROJECT_ID) || 1
 let VIKUNJA_API_KEY = process.env.VIKUNJA_API_KEY || ''
 
@@ -34,7 +34,7 @@ app.get('/config.js', (_req, res) => {
   res.send(
     `window.__HONEYDO_CONFIG__={` +
     `VikunjaBaseUrl:${JSON.stringify(VIKUNJA_BASE_URL)},` +
-    `HoneyDoLabel:${JSON.stringify(HONEYDO_LABEL)},` +
+    `HoneyDoAssigneeId:${JSON.stringify(HONEYDO_ASSIGNEE_ID)},` +
     `DefaultProjectId:${DEFAULT_PROJECT_ID}};`
   )
 })

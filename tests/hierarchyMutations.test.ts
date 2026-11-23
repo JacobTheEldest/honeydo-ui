@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ParentChangeApi } from '../src/utils/hierarchyMutations.ts'
+import type { VikunjaUser, VikunjaTask } from '../src/types/vikunja.ts'
 import {
   applyParentChange,
   applyParentChangeToTasks,
@@ -11,10 +12,12 @@ import {
 } from '../src/utils/hierarchyMutations.ts'
 import type { TaskTreeNode } from '../src/utils/taskTree.ts'
 
+const JACOB: VikunjaUser = { id: 1, username: 'jacob', name: 'Jacob' }
+
 function makeApi(initialParents: Array<[number, number]> = []) {
   const parents = new Map(initialParents)
   const dueDates = new Map<number, string | null>([[2, 'old-date']])
-  const labels = new Map<number, Set<number>>()
+  const assignees = new Map<number, Set<number>>()
   const calls: string[] = []
   let failAddParent: number | null = null
   let refreshes = 0
@@ -34,15 +37,15 @@ function makeApi(initialParents: Array<[number, number]> = []) {
       calls.push(`due:${taskId}:${dueDate}`)
       dueDates.set(taskId, dueDate)
     },
-    async addLabel(taskId, labelId) {
-      calls.push(`label+:${taskId}:${labelId}`)
-      const taskLabels = labels.get(taskId) ?? new Set<number>()
-      taskLabels.add(labelId)
-      labels.set(taskId, taskLabels)
+    async assignUser(taskId, userId) {
+      calls.push(`assign+:${taskId}:${userId}`)
+      const taskAssignees = assignees.get(taskId) ?? new Set<number>()
+      taskAssignees.add(userId)
+      assignees.set(taskId, taskAssignees)
     },
-    async removeLabel(taskId, labelId) {
-      calls.push(`label-:${taskId}:${labelId}`)
-      labels.get(taskId)?.delete(labelId)
+    async unassignUser(taskId, userId) {
+      calls.push(`assign-:${taskId}:${userId}`)
+      assignees.get(taskId)?.delete(userId)
     },
     async refresh() {
       refreshes++
@@ -55,7 +58,7 @@ function makeApi(initialParents: Array<[number, number]> = []) {
     calls,
     parents,
     dueDates,
-    labels,
+    assignees,
     get refreshes() { return refreshes },
     failAdd(parentId: number) { failAddParent = parentId },
   }
@@ -69,7 +72,8 @@ const tree: TaskTreeNode = {
   done_at: null,
   due_date: null,
   project_id: 1,
-  labels: [{ id: 1, title: 'Honey-Do' }],
+  assignees: [JACOB],
+  labels: [],
   created: '',
   updated: '',
   children: [{
@@ -80,6 +84,7 @@ const tree: TaskTreeNode = {
     done_at: null,
     due_date: null,
     project_id: 1,
+    assignees: [],
     labels: [],
     created: '',
     updated: '',
@@ -91,6 +96,7 @@ const tree: TaskTreeNode = {
       done_at: null,
       due_date: null,
       project_id: 1,
+      assignees: [],
       labels: [],
       created: '',
       updated: '',
@@ -135,10 +141,10 @@ test('child A -> child B replaces the old edge without moving descendants', asyn
   assert.deepEqual(mock.calls.slice(0, 2), ['remove:1:2', 'add:3:2'])
 })
 
-test('root promotion removes parent, applies Honey-Do label, and persists root order', async () => {
+test('root promotion removes parent, assigns user, and persists root order', async () => {
   const task = { id: 2, related_tasks: { parenttask: [{ id: 1, title: 'Parent' }] } }
-  const parent = { id: 1, labels: [{ id: 7, title: 'Honey-Do' }] }
-  assert.equal(canPromoteToRoot(task, parent, 'Honey-Do'), true)
+  const parent = { id: 1, assignees: [JACOB] }
+  assert.equal(canPromoteToRoot(task, parent, JACOB.id), true)
 
   const mock = makeApi([[2, 1]])
   await applyParentChange(change({
@@ -146,21 +152,21 @@ test('root promotion removes parent, applies Honey-Do label, and persists root o
     oldParentIds: [1],
     newParentId: null,
     newDueDate: 'root-top',
-    labelIdToAdd: 7,
+    assigneeIdToAdd: JACOB.id,
   }), mock.api)
   assert.equal(mock.parents.has(2), false)
-  assert.equal(mock.labels.get(2)?.has(7), true)
+  assert.ok(mock.assignees.get(2)?.has(JACOB.id))
   assert.equal(mock.dueDates.get(2), 'root-top')
 })
 
-test('root promotion under an unlabeled or unknown parent is rejected before API writes', () => {
+test('root promotion under an unassigned or unknown parent is rejected before API writes', () => {
   const task = { related_tasks: { parenttask: [{ id: 1, title: 'Hidden parent' }] } }
-  const parent = { id: 1, labels: [] }
-  assert.equal(canPromoteToRoot(task, parent, 'Honey-Do'), false)
-  assert.equal(canPromoteToRoot(task, undefined, 'Honey-Do'), false)
+  const parent = { id: 1, assignees: [] }
+  assert.equal(canPromoteToRoot(task, parent, JACOB.id), false)
+  assert.equal(canPromoteToRoot(task, undefined, JACOB.id), false)
   assert.equal(canPromoteToRoot({
-    related_tasks: { parenttask: [{ id: 1, title: 'A' }, { id: 2, title: 'B' }] },
-  }, { id: 1, labels: [{ id: 7, title: 'Honey-Do' }] }, 'Honey-Do'), false)
+    related_tasks: { parenttask: [{ id: 1, title: 'A' }, { id: 2, title: 'B' }] } as any,
+  }, { id: 1, assignees: [JACOB] } as any, JACOB.id), false)
 })
 
 test('cross-project relations are accepted by the mutation workflow', async () => {
@@ -191,7 +197,7 @@ test('local parent updates immediately reparent roots and promotions', () => {
   const tasks = [
     { ...tree, related_tasks: { subtask: [{ id: 2, title: 'B' }] } },
     { ...tree.children[0], related_tasks: { parenttask: [{ id: 1, title: 'A' }] } },
-    { ...tree, id: 4, title: 'D', labels: [], related_tasks: { subtask: [] } },
+    { ...tree, id: 4, title: 'D', assignees: [], related_tasks: { subtask: [] } },
   ]
   const nested = applyParentChangeToTasks(tasks, change({
     taskId: 4,
@@ -200,7 +206,7 @@ test('local parent updates immediately reparent roots and promotions', () => {
     newParentId: 1,
     oldDueDate: null,
     newDueDate: 'nested-position',
-  }))
+  })) as VikunjaTask[]
   assert.deepEqual(nested.find((task) => task.id === 4)?.related_tasks?.parenttask, [{ id: 1, title: 'A' }])
   assert.equal(nested.find((task) => task.id === 1)?.related_tasks?.subtask?.some((child) => child.id === 4), true)
   assert.equal(nested.find((task) => task.id === 4)?.due_date, 'nested-position')
@@ -212,11 +218,11 @@ test('local parent updates immediately reparent roots and promotions', () => {
     newParentId: null,
     oldDueDate: null,
     newDueDate: 'root-position',
-    labelIdToAdd: 7,
-  }), { id: 7, title: 'Honey-Do' })
+    assigneeIdToAdd: JACOB.id,
+  }), JACOB) as VikunjaTask[]
   assert.deepEqual(promoted.find((task) => task.id === 2)?.related_tasks?.parenttask, [])
   assert.equal(promoted.find((task) => task.id === 1)?.related_tasks?.subtask?.some((child) => child.id === 2), false)
-  assert.equal(promoted.find((task) => task.id === 2)?.labels.some((label) => label.id === 7), true)
+  assert.ok(promoted.find((task) => task.id === 2)?.assignees?.some((a) => a.id === JACOB.id))
   assert.equal(promoted.find((task) => task.id === 2)?.due_date, 'root-position')
 })
 

@@ -7,7 +7,7 @@ services:
     environment:
       - VIKUNJA_API_KEY=${VIKUNJA_API_KEY}
       - VIKUNJA_BASE_URL=${VIKUNJA_BASE_URL:-https://vikunja.jacobsteward.me}
-      - HONEYDO_LABEL=${HONEYDO_LABEL:-Honey-Do}
+      - HONEYDO_ASSIGNEE_ID=${HONEYDO_ASSIGNEE_ID:-}
       - DEFAULT_PROJECT_ID=${DEFAULT_PROJECT_ID:-1}
       - PORT=3000
     restart: unless-stopped

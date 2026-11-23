@@ -7,7 +7,7 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown, Sun, Moon } from 'lucide-react'
+import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown, Sun, Moon, User } from 'lucide-react'
 import { useVikunjaApi } from './hooks/useVikunjaApi.ts'
 import { useUndoableActions } from './hooks/useUndoableActions.ts'
 import { useDarkMode } from './hooks/useDarkMode.ts'
@@ -16,7 +16,7 @@ import { usePullToRefresh } from './hooks/usePullToRefresh.ts'
 import TaskItem from './components/TaskItem.tsx'
 import TaskSubtreePreview from './components/TaskSubtreePreview.tsx'
 import TaskComposer from './components/TaskComposer.tsx'
-import UnlabelConfirmDialog from './components/UnlabelConfirmDialog.tsx'
+import UnassignConfirmDialog from './components/UnassignConfirmDialog.tsx'
 import DeleteConfirmDialog from './components/DeleteConfirmDialog.tsx'
 import FAB from './components/FAB.tsx'
 import { composerReducer, initialComposerState } from './utils/composerState.ts'
@@ -34,9 +34,9 @@ import {
   type TaskTreeNode,
   type ParentScope,
 } from './utils/taskTree.ts'
-import { countDescendants, planUnlabel, type UnlabelDecision } from './utils/unlabel.ts'
+import { countDescendants, planUnassign, type UnassignDecision } from './utils/unlabel.ts'
 import { planDelete, type DeleteDecision, type DeleteScope } from './utils/delete.ts'
-import { HONEYDO_LABEL, DEFAULT_PROJECT_ID } from './config.ts'
+import { HONEYDO_ASSIGNEE_ID, DEFAULT_PROJECT_ID } from './config.ts'
 
 function findNode(nodes: TaskTreeNode[], id: number): TaskTreeNode | null {
   for (const node of nodes) {
@@ -49,57 +49,51 @@ function findNode(nodes: TaskTreeNode[], id: number): TaskTreeNode | null {
 
 export default function App() {
   const {
-    labels,
+    users,
     tasks,
     loading,
     error,
     fetchTasks,
+    fetchUsers,
     createTask,
     createSubtask,
     deleteTask,
     updateTask,
     persistTaskOrdering,
     changeTaskParent,
-    removeFromHoneyDo,
-    addLabelToTask,
-    createLabel,
+    assignUserToTask,
+    unassignFromHoneyDo,
     restoreTask,
     addSubtaskRelation,
   } = useVikunjaApi()
 
   const { dark, toggle: toggleDarkMode } = useDarkMode()
   const [showCompleted, setShowCompleted] = useState(false)
-  const [honeyDoLabelId, setHoneyDoLabelId] = useState<number | null>(null)
+  const [assigneeId, setAssigneeId] = useState<number | undefined>(HONEYDO_ASSIGNEE_ID)
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set())
   const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null)
-  const [unlabelRequest, setUnlabelRequest] = useState<{ taskId: number; busy: boolean } | null>(null)
+  const [unassignRequest, setUnassignRequest] = useState<{ taskId: number; busy: boolean } | null>(null)
   const [deleteRequest, setDeleteRequest] = useState<number | null>(null)
   const createdPositionsRef = useRef(new Map<number, { parentId: number | null; position: number }>())
   const [composerState, composerDispatch] = useReducer(composerReducer, initialComposerState)
 
-  // Find or create Honey-Do label
+  // Fetch users on mount for the user dropdown
   useEffect(() => {
-    const existing = labels.find((l) => l.title === HONEYDO_LABEL)
-    if (existing) {
-      setHoneyDoLabelId(existing.id)
-    } else if (labels.length > 0 && honeyDoLabelId === null) {
-      // Auto-create label once we know it doesn't exist
-      createLabel(HONEYDO_LABEL).then((label) => {
-        setHoneyDoLabelId(label.id)
-      })
-    }
-  }, [labels, honeyDoLabelId, createLabel])
+    fetchUsers().catch(() => {})
+  }, [fetchUsers])
 
-  // Fetch tasks on mount
+  // Fetch tasks on mount, filtered by the default assignee
   useEffect(() => {
-    fetchTasks().catch(() => {})
-  }, [fetchTasks])
+    fetchTasks(assigneeId).catch(() => {})
+  }, [fetchTasks, assigneeId])
 
   const byId = useMemo<Map<number, import('./types/vikunja.ts').VikunjaTask>>(() => {
     const m = new Map<number, import('./types/vikunja.ts').VikunjaTask>()
     for (const t of tasks) m.set(t.id, t)
     return m
   }, [tasks])
+
+  const selectedUser = users.find((u) => u.id === assigneeId)
 
   // Stable handlers
   const {
@@ -123,16 +117,13 @@ export default function App() {
     [tasks, pendingDeleteIds]
   )
 
-  // Tree of all Honey-Do-rooted tasks. Children without the Honey-Do label
-  // are pulled in transitively via related_tasks.subtask (see useVikunjaApi).
+  // Tree of all tasks assigned to the selected user. Children without an
+  // assignee are pulled in transitively via related_tasks.subtask.
   const taskTree = useMemo<TaskTreeNode[]>(() => {
-    return buildTree(activeTasks, HONEYDO_LABEL)
-  }, [activeTasks])
+    return buildTree(activeTasks, assigneeId)
+  }, [activeTasks, assigneeId])
 
   // Hidden ancestor ids: any node whose ancestor is `done && !showCompleted`
-  // (i.e. the show-done toggle is off and an ancestor was marked done).
-  // We use this to mirror the existing "hide done task" behavior across the
-  // whole subtree, so a done parent doesn't leave orphan children visible.
   const hiddenByAncestor = useMemo<Set<number>>(() => {
     if (showCompleted) return new Set()
     const hidden = new Set<number>()
@@ -178,42 +169,36 @@ export default function App() {
     setOpenTaskMenuId((current) => open ? taskId : current === taskId ? null : current)
   }, [])
 
-  const unlabelNode = useMemo<TaskTreeNode | null>(() => {
-    return unlabelRequest === null ? null : findNode(taskTree, unlabelRequest.taskId)
-  }, [unlabelRequest, taskTree])
+  const unassignNode = useMemo<TaskTreeNode | null>(() => {
+    return unassignRequest === null ? null : findNode(taskTree, unassignRequest.taskId)
+  }, [unassignRequest, taskTree])
 
-  const handleUnlabelOpen = useCallback((taskId: number) => {
+  const handleUnassignOpen = useCallback((taskId: number) => {
     setOpenTaskMenuId(null)
-    setUnlabelRequest({ taskId, busy: false })
+    setUnassignRequest({ taskId, busy: false })
   }, [])
 
-  const handleUnlabelDecision = useCallback(async (decision: UnlabelDecision) => {
+  const handleUnassignDecision = useCallback(async (decision: UnassignDecision) => {
     if (decision.type === 'cancel') {
-      setUnlabelRequest(null)
+      setUnassignRequest(null)
       return
     }
-    const node = unlabelNode
-    if (!node || unlabelRequest === null || unlabelRequest.busy) return
-    const honeyDoLabelId = node.labels?.find((label) => label.title === HONEYDO_LABEL)?.id
-    if (honeyDoLabelId === undefined) {
-      notify('The Honey-Do label is unavailable. Refresh the task list and try again.')
-      setUnlabelRequest(null)
-      return
-    }
-    const plan = planUnlabel(decision, node, honeyDoLabelId)
+    const node = unassignNode
+    if (!node || unassignRequest === null || unassignRequest.busy || assigneeId === undefined) return
+    const plan = planUnassign(decision, node, assigneeId)
     if (!plan) {
-      setUnlabelRequest(null)
+      setUnassignRequest(null)
       return
     }
-    setUnlabelRequest((current) => current === null ? null : { ...current, busy: true })
+    setUnassignRequest((current) => current === null ? null : { ...current, busy: true })
     try {
-      await removeFromHoneyDo(plan)
+      await unassignFromHoneyDo(plan)
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not remove this task from Honey-Do.')
+      notify(error instanceof Error ? error.message : 'Could not unassign this task.')
     } finally {
-      setUnlabelRequest(null)
+      setUnassignRequest(null)
     }
-  }, [unlabelNode, unlabelRequest, removeFromHoneyDo, notify])
+  }, [unassignNode, unassignRequest, assigneeId, unassignFromHoneyDo, notify])
 
   const deleteNode = useMemo<TaskTreeNode | null>(() => {
     return deleteRequest === null ? null : findNode(taskTree, deleteRequest)
@@ -315,25 +300,25 @@ export default function App() {
       if (!parent && createdSiblingPositions.length > 0 && !beforeTask && !afterTask && !isSequentialInsertion) {
         position = effectiveLastPosition + 1
       }
-      if (!parent && !honeyDoLabelId) {
-        throw new Error('The Honey-Do label is unavailable. Refresh the task list and try again.')
+      if (!parent && assigneeId === undefined) {
+        throw new Error('No user is selected. Select a user before adding a task.')
       }
       const createdTask = parent
         ? await createSubtask({ title, project_id: parent.project_id, due_date: positionToDueDate(position) }, parent.id)
         : await createTask({ title, project_id: DEFAULT_PROJECT_ID, due_date: positionToDueDate(position) })
       createdPositionsRef.current.set(createdTask.id, { parentId: placement.parentId, position })
       const task = createdTask
-      if (!parent && honeyDoLabelId !== null) {
+      if (!parent && assigneeId !== undefined) {
         try {
-          await addLabelToTask(task.id, honeyDoLabelId)
+          await assignUserToTask(task.id, assigneeId)
         } catch (error) {
-          await fetchTasks().catch(() => {})
+          await fetchTasks(assigneeId).catch(() => {})
           throw error
         }
       }
       return task.id
     },
-    [byId, taskTree, createTask, createSubtask, honeyDoLabelId, addLabelToTask, fetchTasks]
+    [byId, taskTree, createTask, createSubtask, assigneeId, assignUserToTask, fetchTasks]
   )
 
   const dragAndDrop = useTaskDragAndDrop({
@@ -342,7 +327,7 @@ export default function App() {
     collapsed,
     setCollapsed,
     composerDispatch,
-    honeyDoLabelId,
+    assigneeId,
     persistTaskOrdering,
     changeTaskParent,
     notify,
@@ -356,6 +341,7 @@ export default function App() {
     done_at: null,
     due_date: null,
     project_id: DEFAULT_PROJECT_ID,
+    assignees: [],
     labels: [],
     created: '',
     updated: '',
@@ -415,9 +401,6 @@ export default function App() {
           const isActive = dragAndDrop.activeTaskId === node.id
           const subtreeIsDragging = ancestorDragging || isActive
           const childDropPreview = drop?.mode === 'child' && drop.parentId === node.id
-          // An open composer placed under this node needs its child group
-          // rendered even when the node has no children (e.g. "Add subtask"
-          // on a leaf) or is collapsed, exactly like the child drop preview.
           const childComposerOpen = composerState.open && placement.parentId === node.id
           return (
             <Fragment key={`${parentScope}:${node.id}`}>
@@ -435,9 +418,9 @@ export default function App() {
                 onToggleDone={handleToggleDone}
                 onUpdateTitle={handleUpdateTitle}
                 onAddSubtask={handleAddSubtask}
-                onUnlabel={handleUnlabelOpen}
+                onUnassign={handleUnassignOpen}
                 onDelete={handleDeleteOpen}
-                isHoneyDoLabeled={Boolean(node.labels?.some((label) => label.title === HONEYDO_LABEL))}
+                isAssigned={Boolean(node.assignees?.some((a) => a.id === assigneeId))}
                 menuOpen={openTaskMenuId === node.id}
                 onMenuOpenChange={handleMenuOpenChange}
                 showCompleted={showCompleted}
@@ -503,6 +486,39 @@ export default function App() {
                 </>
               )}
             </button>
+            {/* User dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => {}}
+                className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
+                aria-label={selectedUser ? `Assigned to ${selectedUser.name ?? selectedUser.username}` : 'No user selected'}
+                aria-haspopup="listbox"
+              >
+                <User className="w-4 h-4" />
+                {selectedUser ? (
+                  <span className="truncate max-w-[120px]">{selectedUser.name ?? selectedUser.username}</span>
+                ) : (
+                  <span className="text-gray-400 truncate max-w-[120px]">Select user</span>
+                )}
+              </button>
+              {/* Simple user list — clicking a user switches the view */}
+              <div
+                className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg hidden"
+              >
+                {users.map((user) => (
+                  <button
+                    key={user.id}
+                    onClick={() => {
+                      setAssigneeId(user.id)
+                      fetchTasks(user.id).catch(() => {})
+                    }}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${assigneeId === user.id ? 'bg-gray-100 dark:bg-gray-700 text-honey-dark' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+                  >
+                    {user.name ?? user.username}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </header>
@@ -546,7 +562,7 @@ export default function App() {
           <div className="px-4 py-8 text-center">
             <p className="text-red-500 dark:text-red-400">{error}</p>
             <button
-              onClick={() => fetchTasks()}
+              onClick={() => fetchTasks(assigneeId)}
               className="mt-2 text-honey hover:underline"
             >
               Retry
@@ -556,10 +572,14 @@ export default function App() {
 
         {!composerState.open && !loading && !error && taskTree.length === 0 && (
           <div className="px-4 py-20 text-center">
-            <p className="text-gray-400 dark:text-gray-500 text-lg">No Honey-Do tasks yet</p>
-            <p className="text-gray-400 dark:text-gray-500 text-sm mt-1">
-              Tap the + button to add one
+            <p className="text-gray-400 dark:text-gray-500 text-lg">
+              {assigneeId === undefined ? 'Select a user to see their tasks' : 'No tasks yet'}
             </p>
+            {assigneeId !== undefined && (
+              <p className="text-gray-400 dark:text-gray-500 text-sm mt-1">
+                Tap the + button to add one
+              </p>
+            )}
           </div>
         )}
 
@@ -570,14 +590,14 @@ export default function App() {
       </DragOverlay>
       </DndContext>
 
-      {unlabelRequest && unlabelNode && (
-        <UnlabelConfirmDialog
-          taskTitle={unlabelNode.title}
-          descendantCount={countDescendants(unlabelNode)}
-          busy={unlabelRequest.busy}
-          onCancel={() => handleUnlabelDecision({ type: 'cancel' })}
-          onConfirm={(scope) => handleUnlabelDecision({ type: 'confirm', scope })}
-          returnFocusSelector={`[data-task-id="${unlabelRequest.taskId}"] button[aria-label="Task actions"]`}
+      {unassignRequest && unassignNode && (
+        <UnassignConfirmDialog
+          taskTitle={unassignNode.title}
+          descendantCount={countDescendants(unassignNode)}
+          busy={unassignRequest.busy}
+          onCancel={() => handleUnassignDecision({ type: 'cancel' })}
+          onConfirm={(scope) => handleUnassignDecision({ type: 'confirm', scope })}
+          returnFocusSelector={`[data-task-id="${unassignRequest.taskId}"] button[aria-label="Task actions"]`}
         />
       )}
 

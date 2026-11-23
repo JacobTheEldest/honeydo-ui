@@ -1,41 +1,39 @@
 import ConfirmScopeDialog from './ConfirmScopeDialog.tsx'
-import type { UnlabelScope } from '../utils/unlabel.ts'
+import type { UnassignScope } from '../utils/unlabel.ts'
 
-interface UnlabelConfirmDialogProps {
+interface UnassignConfirmDialogProps {
   taskTitle: string
   /** Recursive descendant count; when 0 the dialog is the compact leaf form. */
   descendantCount: number
   busy: boolean
   onCancel: () => void
-  onConfirm: (scope: UnlabelScope) => void
+  onConfirm: (scope: UnassignScope) => void
   /** Focused after close when the opening control is gone (task left the view). */
   returnFocusSelector?: string
 }
 
-/** Confirmation dialog for removing tasks from Honey-Do. */
-export default function UnlabelConfirmDialog({
+/** Confirmation dialog for unassigning tasks from the selected user. */
+export default function UnassignConfirmDialog({
   taskTitle,
   descendantCount,
   busy,
   onCancel,
   onConfirm,
   returnFocusSelector,
-}: UnlabelConfirmDialogProps) {
+}: UnassignConfirmDialogProps) {
   return (
-    <ConfirmScopeDialog<UnlabelScope>
-      title="Remove from Honey-Do?"
+    <ConfirmScopeDialog<UnassignScope>
+      title="Unassign task?"
       taskTitle={taskTitle}
-      scopeQuestion="Which tasks should leave Honey-Do?"
-      scopeName="unlabel-scope"
+      scopeQuestion="Which tasks should be unassigned?"
+      scopeName="unassign-scope"
       options={descendantCount > 0 ? [
         { value: 'task', label: 'This task only' },
         { value: 'subtree', label: `This task and all subtasks (${descendantCount})` },
       ] : undefined}
       defaultScope="task"
-      description="This removes the Honey-Do label and its list ordering metadata. It does not delete any
-        task or change subtask relationships. Subtasks without their own Honey-Do label may
-        disappear from this view."
-      confirmLabel="Remove from Honey-Do"
+      description="This removes the selected user from the task and clears its list ordering metadata. It does not delete any task or change subtask relationships. Subtasks without their own assignment may disappear from this view."
+      confirmLabel="Unassign"
       busy={busy}
       onCancel={onCancel}
       onConfirm={onConfirm}

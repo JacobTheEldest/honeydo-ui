@@ -7,8 +7,8 @@ A mobile-first React web app for organizing selected Vikunja tasks in a simple H
 - Reorder tasks with drag and drop; move tasks into or out of subtasks.
 - Inline title editing, completion, and optional completed-task display.
 - Create root tasks or subtasks with a persistent inline composer.
-- Show subtasks in a nested tree, including descendants without their own Honey-Do label.
-- Remove a Honey-Do label and its ordering metadata for one task or a subtree.
+- Show subtasks in a nested tree, including descendants without their own assignment to the selected user.
+- Unassign a user from a task and clear its ordering metadata for one task or a subtree.
 - Open a task in Vikunja for details; dark mode and mobile gestures.
 
 ## Stack
@@ -47,7 +47,7 @@ npm run test:e2e:prod
 | --- | --- | --- |
 | `VIKUNJA_API_KEY` | — | Required by the Express proxy; remains server-side. |
 | `VIKUNJA_BASE_URL` | `https://vikunja.jacobsteward.me` | Vikunja instance URL. |
-| `HONEYDO_LABEL` | `Honey-Do` | Label that identifies tasks for the view. |
+| `HONEYDO_ASSIGNEE_ID` | — | Vikunja user id whose assigned tasks appear in the view. Set to Jacob's user id. |
 | `DEFAULT_PROJECT_ID` | `1` | Project used for new root tasks. |
 | `PORT` | `3000` | Express proxy port. |
 

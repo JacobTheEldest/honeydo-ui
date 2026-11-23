@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef, type SyntheticEvent } from 'r
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useDrag } from '@use-gesture/react'
-import { ExternalLink, Check, GripVertical, ChevronRight, ChevronDown, MoreHorizontal, Plus, Tag, Trash2 } from 'lucide-react'
+import { ExternalLink, Check, GripVertical, ChevronRight, ChevronDown, MoreHorizontal, Plus, User, Trash2 } from 'lucide-react'
 import { VIKUNJA_BASE_URL } from '../config.ts'
 import { startedOnDragHandle } from '../utils/gestureOrigin.ts'
 import type { VikunjaTask } from '../types/vikunja.ts'
@@ -18,10 +18,10 @@ interface TaskItemProps {
   onToggleDone: (id: number, done: boolean) => void
   onUpdateTitle: (id: number, title: string) => void
   onAddSubtask: (taskId: number) => void
-  onUnlabel: (taskId: number) => void
+  onUnassign: (taskId: number) => void
   onDelete: (taskId: number) => void
-  /** True when this task itself carries the Honey-Do label. */
-  isHoneyDoLabeled: boolean
+  /** True when this task is assigned to the currently selected user. */
+  isAssigned: boolean
   menuOpen: boolean
   onMenuOpenChange: (taskId: number, open: boolean) => void
   showCompleted: boolean
@@ -41,9 +41,9 @@ export default function TaskItem({
   onToggleDone,
   onUpdateTitle,
   onAddSubtask,
-  onUnlabel,
+  onUnassign,
   onDelete,
-  isHoneyDoLabeled,
+  isAssigned,
   menuOpen,
   onMenuOpenChange,
   showCompleted,
@@ -300,14 +300,14 @@ export default function TaskItem({
                 >
                   <Plus className="h-4 w-4" /> Add subtask
                 </button>
-                {isHoneyDoLabeled && (
+                {isAssigned && (
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={() => { onMenuOpenChange(task.id, false); onUnlabel(task.id) }}
+                    onClick={() => { onMenuOpenChange(task.id, false); onUnassign(task.id) }}
                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
                   >
-                    <Tag className="h-4 w-4" /> Unlabel
+                    <User className="h-4 w-4" /> Unassign
                   </button>
                 )}
                 <a

@@ -3,7 +3,7 @@ declare global {
   interface Window {
     __HONEYDO_CONFIG__?: {
       VikunjaBaseUrl?: string
-      HoneyDoLabel?: string
+      HoneyDoAssigneeId?: number
       DefaultProjectId?: number
     }
   }
@@ -12,5 +12,5 @@ declare global {
 const cfg = window.__HONEYDO_CONFIG__ || {}
 
 export const VIKUNJA_BASE_URL = cfg.VikunjaBaseUrl || 'https://vikunja.jacobsteward.me'
-export const HONEYDO_LABEL = cfg.HoneyDoLabel || 'Honey-Do'
+export const HONEYDO_ASSIGNEE_ID = cfg.HoneyDoAssigneeId ?? undefined
 export const DEFAULT_PROJECT_ID = cfg.DefaultProjectId || 1

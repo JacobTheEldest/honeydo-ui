@@ -1,12 +1,12 @@
-import type { VikunjaLabel, VikunjaTask } from '../types/vikunja.ts'
+import type { VikunjaTask, VikunjaUser } from '../types/vikunja.ts'
 import type { TaskTreeNode } from './taskTree.ts'
 
 export interface ParentChangeApi {
   removeRelation: (parentId: number, childId: number) => Promise<void>
   addRelation: (parentId: number, childId: number) => Promise<void>
   setDueDate: (taskId: number, dueDate: string | null) => Promise<void>
-  addLabel: (taskId: number, labelId: number) => Promise<void>
-  removeLabel: (taskId: number, labelId: number) => Promise<void>
+  assignUser: (taskId: number, userId: number) => Promise<void>
+  unassignUser: (taskId: number, userId: number) => Promise<void>
   refresh: () => Promise<unknown>
 }
 
@@ -18,7 +18,7 @@ export interface ParentChange {
   newParentId: number | null
   oldDueDate: string | null
   newDueDate: string
-  labelIdToAdd?: number
+  assigneeIdToAdd?: number
 }
 
 export function isSelfOrDescendant(node: TaskTreeNode, targetId: number): boolean {
@@ -34,7 +34,7 @@ export function canNestUnder(node: TaskTreeNode, targetId: number): boolean {
 export function applyParentChangeToTasks(
   tasks: VikunjaTask[],
   change: ParentChange,
-  labelToAdd?: VikunjaLabel
+  assigneeToAdd?: VikunjaUser
 ): VikunjaTask[] {
   const movedTask = tasks.find((task) => task.id === change.taskId)
   if (!movedTask) return tasks
@@ -45,13 +45,13 @@ export function applyParentChangeToTasks(
 
   return tasks.map((task) => {
     if (task.id === movedTask.id) {
-      const labels = labelToAdd && !task.labels.some((label) => label.id === labelToAdd.id)
-        ? [...task.labels, labelToAdd]
-        : task.labels
+      const assignees = assigneeToAdd && !task.assignees.some((a) => a.id === assigneeToAdd.id)
+        ? [...task.assignees, assigneeToAdd]
+        : task.assignees
       return {
         ...task,
         due_date: change.newDueDate,
-        labels,
+        assignees,
         related_tasks: {
           ...task.related_tasks,
           parenttask: newParent ? [{ id: newParent.id, title: newParent.title }] : [],
@@ -90,14 +90,14 @@ export function reorderAtDropEdge(
 
 export function canPromoteToRoot(
   task: { related_tasks?: VikunjaTask['related_tasks'] },
-  directParent: Pick<VikunjaTask, 'id' | 'labels'> | undefined,
-  honeyDoLabel: string
+  directParent: Pick<VikunjaTask, 'id' | 'assignees'> | undefined,
+  assigneeId: number | undefined
 ): boolean {
   const parents = task.related_tasks?.parenttask ?? []
   if (parents.length !== 1) return false
   const parentId = parents[0].id
   return directParent?.id === parentId &&
-    directParent.labels?.some((label) => label.title === honeyDoLabel) === true
+    directParent.assignees?.some((a) => a.id === assigneeId) === true
 }
 
 /**
@@ -112,16 +112,16 @@ export async function applyParentChange(change: ParentChange, api: ParentChangeA
     newParentId,
     oldDueDate,
     newDueDate,
-    labelIdToAdd,
+    assigneeIdToAdd,
   } = change
   const oldParentIds = [...new Set(change.oldParentIds ?? (oldParentId === null ? [] : [oldParentId]))]
   if (oldParentIds.length === 1 && oldParentIds[0] === newParentId &&
-      !labelIdToAdd && oldDueDate === newDueDate) return
+      !assigneeIdToAdd && oldDueDate === newDueDate) return
 
   const removedParentIds: number[] = []
   let newRelationAdded = false
   let dueDateChanged = false
-  let labelAdded = false
+  let assigneeAdded = false
 
   try {
     for (const parentId of oldParentIds) {
@@ -137,9 +137,9 @@ export async function applyParentChange(change: ParentChange, api: ParentChangeA
       await api.setDueDate(taskId, newDueDate)
       dueDateChanged = true
     }
-    if (labelIdToAdd !== undefined) {
-      await api.addLabel(taskId, labelIdToAdd)
-      labelAdded = true
+    if (assigneeIdToAdd !== undefined) {
+      await api.assignUser(taskId, assigneeIdToAdd)
+      assigneeAdded = true
     }
     await api.refresh()
   } catch (cause) {
@@ -152,8 +152,8 @@ export async function applyParentChange(change: ParentChange, api: ParentChangeA
       }
     }
 
-    if (labelAdded && labelIdToAdd !== undefined) {
-      await compensate(() => api.removeLabel(taskId, labelIdToAdd))
+    if (assigneeAdded && assigneeIdToAdd !== undefined) {
+      await compensate(() => api.unassignUser(taskId, assigneeIdToAdd))
     }
     if (dueDateChanged) {
       await compensate(() => api.setDueDate(taskId, oldDueDate))

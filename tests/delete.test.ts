@@ -32,6 +32,7 @@ function makeNode(
     due_date: orderDate(id),
     project_id: 1,
     labels: [],
+    assignees: [],
     created: orderDate(0),
     updated: orderDate(0),
     children: options.children ?? [],

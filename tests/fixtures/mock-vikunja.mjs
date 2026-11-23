@@ -2,16 +2,18 @@ import express from 'express'
 
 const app = express()
 app.use(express.json())
-const HONEY_DO = { id: 1, title: 'Honey-Do' }
+const JACOB = { id: 1, username: 'jacob', name: 'Jacob' }
+const LAYA = { id: 2, username: 'laya', name: 'Laya' }
 const date = (position) => new Date(Date.UTC(2100, 0, 1, 0, position)).toISOString()
 const tasks = new Map()
+const users = new Map([[1, JACOB], [2, LAYA]])
 const trashed = new Map()
 const parents = new Map([[11, 1], [12, 1], [21, 2], [31, 30]])
 const requests = []
 let nextCreatedId = 100
 const DUE_DATE_CLEARED = '0001-01-01T00:00:00Z'
 
-function addTask(id, title, project_id, position, labels = []) {
+function addTask(id, title, project_id, position, assignees = [JACOB]) {
   tasks.set(id, {
     id,
     title,
@@ -20,7 +22,8 @@ function addTask(id, title, project_id, position, labels = []) {
     done_at: null,
     due_date: date(position),
     project_id,
-    labels: labels.map((label) => ({ ...label })),
+    labels: [],
+    assignees: assignees.map((a) => ({ ...a })),
     created: date(0),
     updated: date(0),
     priority: id * 10,
@@ -36,14 +39,14 @@ function resetFixture() {
   parents.set(12, 1)
   parents.set(21, 2)
   parents.set(31, 30)
-  addTask(1, 'Root A', 1, 10, [HONEY_DO])
-  addTask(2, 'Root B', 1, 20, [HONEY_DO])
-  addTask(5, 'Root C', 1, 30, [HONEY_DO])
+  addTask(1, 'Root A', 1, 10)
+  addTask(2, 'Root B', 1, 20)
+  addTask(5, 'Root C', 1, 30)
   addTask(11, 'Promotable child', 1, 40)
   addTask(12, 'Unlabeled-parent child', 1, 50)
   addTask(21, 'B descendant', 2, 60)
-  addTask(30, 'Hidden unlabeled parent', 2, 70)
-  addTask(31, 'Context child', 2, 80, [HONEY_DO])
+  addTask(30, 'Hidden unassigned parent', 2, 70)
+  addTask(31, 'Context child', 2, 80)
   nextCreatedId = 100
 }
 
@@ -85,18 +88,23 @@ const problem = (status, detail, extra = {}) => ({
 })
 
 app.get('/config.js', (_req, res) => {
-  res.type('application/javascript').send('window.__HONEYDO_CONFIG__ = { VikunjaBaseUrl: "http://localhost:3000", HoneyDoLabel: "Honey-Do", DefaultProjectId: 1 };')
+  res.type('application/javascript').send('window.__HONEYDO_CONFIG__ = { VikunjaBaseUrl: "http://localhost:3000", HoneyDoAssigneeId: 1, DefaultProjectId: 1 };')
 })
 // ---------------------------------------------------------------------------
 // Vikunja API v2 surface (the maintained API; v1 is frozen). v2 semantics:
 // POST create -> 201, PATCH JSON Merge Patch partial update, DELETE -> 204
-// empty body, list reads
-// return {items, ...} envelopes, errors are problem+json. Same task/parents/
-// trashed state handling as the live 2.8.0 instance: soft delete into the
-// trash destroys nothing (relation rows survive both directions), restore
-// re-exposes them.
+// empty body, list reads return {items, ...} envelopes, errors are problem+json.
+// Same task/parents/trashed state handling as the live 2.8.0 instance: soft
+// delete into the trash destroys nothing (relation rows survive both
+// directions), restore re-exposes them.
 // ---------------------------------------------------------------------------
-app.get('/api/v2/labels', (_req, res) => res.json(envelope([HONEY_DO])))
+app.get('/api/v2/users', (_req, res) => res.json(envelope([...users.values()])))
+app.get('/api/v2/users/:id', (req, res) => {
+  const id = Number(req.params.id)
+  const user = users.get(id)
+  if (!user) return res.status(404).json(problem(404, 'not found'))
+  res.json(user)
+})
 app.get('/api/v2/projects', (_req, res) =>
   res.json(envelope([{ id: 1, title: 'Fixture project' }, { id: 2, title: 'Cross-project fixture' }]))
 )
@@ -109,8 +117,6 @@ app.get('/api/v2/tasks/:id', (req, res) => {
   const id = Number(req.params.id)
   const task = tasks.get(id)
   if (!task) {
-    // Vikunja 2.8.0: reading a trashed task returns 404 problem+json with
-    // code 4040 and trash metadata (verified against a live instance).
     const trashedTask = trashed.get(id)
     if (trashedTask) {
       return res.status(404).json(problem(404, 'This task is in the trash.', {
@@ -145,6 +151,7 @@ app.post('/api/v2/projects/:id/tasks', (req, res) => {
     due_date: req.body?.due_date ?? null,
     project_id: Number(req.params.id),
     labels: [],
+    assignees: [],
     created: new Date().toISOString(),
     updated: new Date().toISOString(),
     priority: 0,
@@ -197,23 +204,23 @@ app.delete('/api/v2/tasks/:parentId/relations/subtask/:childId', (req, res) => {
   parents.delete(childId)
   res.status(204).end()
 })
-app.post('/api/v2/tasks/:id/labels', (req, res) => {
+app.put('/api/v2/tasks/:id/assignees', (req, res) => {
   requests.push({ method: req.method, path: req.path, body: req.body })
   const task = tasks.get(Number(req.params.id))
   if (!task) return res.status(404).json(problem(404, 'not found'))
-  if (!task.labels.some((label) => label.id === Number(req.body.label_id))) task.labels.push(HONEY_DO)
-  res.status(201).json({ label_id: req.body.label_id })
+  const userId = Number(req.body?.user_id)
+  const user = users.get(userId)
+  if (!user) return res.status(404).json(problem(404, 'user not found'))
+  if (!task.assignees.some((a) => a.id === userId)) task.assignees.push({ ...user })
+  res.status(201).json({ user_id: userId })
 })
-app.delete('/api/v2/tasks/:id/labels/:labelId', (req, res) => {
+app.delete('/api/v2/tasks/:id/assignees/:userId', (req, res) => {
   requests.push({ method: req.method, path: req.path })
   const task = tasks.get(Number(req.params.id))
   if (!task) return res.status(404).json(problem(404, 'not found'))
-  task.labels = task.labels.filter((label) => label.id !== Number(req.params.labelId))
+  const userId = Number(req.params.userId)
+  task.assignees = task.assignees.filter((a) => a.id !== userId)
   res.status(204).end()
-})
-app.post('/api/v2/labels', (req, res) => {
-  requests.push({ method: req.method, path: req.path, body: req.body })
-  res.status(201).json({ id: 2, title: req.body?.title ?? '' })
 })
 app.post('/api/v2/tasks/:id/restore', (req, res) => {
   requests.push({ method: req.method, path: req.path })
@@ -238,7 +245,7 @@ app.post('/api/v2/test-reset', (_req, res) => {
 })
 app.post('/api/v2/test-seed-long-list', (_req, res) => {
   for (let index = 0; index < 20; index++) {
-    addTask(3000 + index, `Long-list root ${index + 1}`, 1, 100 + index, [HONEY_DO])
+    addTask(3000 + index, `Long-list root ${index + 1}`, 1, 100 + index)
   }
   res.status(201).json({ count: 20 })
 })

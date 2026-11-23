@@ -2,24 +2,24 @@ import type { VikunjaTask } from '../types/vikunja.ts'
 import type { TaskTreeNode } from './taskTree.ts'
 
 /** Removal scope chosen in the confirmation dialog. */
-export type UnlabelScope = 'task' | 'subtree'
+export type UnassignScope = 'task' | 'subtree'
 
 /**
  * Outcome of the confirmation dialog. A cancel decision yields no plan, so
  * the dialog flow cannot issue any writes.
  */
-export type UnlabelDecision =
+export type UnassignDecision =
   | { type: 'cancel' }
-  | { type: 'confirm'; scope: UnlabelScope }
+  | { type: 'confirm'; scope: UnassignScope }
 
-export interface UnlabelPlan {
-  /** Tasks whose Honey-Do label/order metadata should be removed. */
+export interface UnassignPlan {
+  /** Tasks whose assignee/order metadata should be removed. */
   targets: VikunjaTask[]
-  honeyDoLabelId: number
+  userId: number
 }
 
-export interface UnlabelApi {
-  removeLabel: (taskId: number, labelId: number) => Promise<void>
+export interface UnassignApi {
+  unassignUser: (taskId: number, userId: number) => Promise<void>
   setDueDate: (taskId: number, dueDate: null) => Promise<void>
   refresh: () => Promise<unknown>
 }
@@ -31,9 +31,9 @@ export function countDescendants(node: TaskTreeNode): number {
 
 /**
  * Resolve which tasks a confirmed decision touches. 'task' keeps descendant
- * label/order data unchanged; 'subtree' covers every recursive descendant.
+ * assignee/order data unchanged; 'subtree' covers every recursive descendant.
  */
-export function resolveUnlabelTargets(node: TaskTreeNode, scope: UnlabelScope): VikunjaTask[] {
+export function resolveUnassignTargets(node: TaskTreeNode, scope: UnassignScope): VikunjaTask[] {
   if (scope === 'task') return [node]
   const out: VikunjaTask[] = []
   const visit = (current: TaskTreeNode): void => {
@@ -48,32 +48,33 @@ export function resolveUnlabelTargets(node: TaskTreeNode, scope: UnlabelScope): 
  * Map a dialog decision to the write plan. Cancel returns null so the caller
  * performs zero API writes.
  */
-export function planUnlabel(
-  decision: UnlabelDecision,
+export function planUnassign(
+  decision: UnassignDecision,
   node: TaskTreeNode,
-  honeyDoLabelId: number
-): UnlabelPlan | null {
+  userId: number
+): UnassignPlan | null {
   if (decision.type === 'cancel') return null
   return {
-    targets: resolveUnlabelTargets(node, decision.scope),
-    honeyDoLabelId,
+    targets: resolveUnassignTargets(node, decision.scope),
+    userId,
   }
 }
 
 /**
- * Apply label/order removal without deleting tasks or changing hierarchy.
+ * Apply user unassignment/order removal without deleting tasks or changing
+ * hierarchy.
  *
- * Per target: remove the Honey-Do label only when present, and clear the
- * Honey-Do sorting due_date only when set. Every target is attempted even if
- * another fails; the server is refetched afterwards so the UI converges on
- * authoritative state, and an aggregated error reports exactly what failed.
+ * Per target: unassign the user only when assigned, and clear the sorting
+ * due_date only when set. Every target is attempted even if another fails;
+ * the server is refetched afterwards so the UI converges on authoritative
+ * state, and an aggregated error reports exactly what failed.
  */
-export async function applyUnlabel(plan: UnlabelPlan, api: UnlabelApi): Promise<void> {
+export async function applyUnassign(plan: UnassignPlan, api: UnassignApi): Promise<void> {
   const failures: string[] = []
   await Promise.all(plan.targets.map(async (task) => {
     const operations: Array<{ name: string; run: () => Promise<void> }> = []
-    if (task.labels?.some((label) => label.id === plan.honeyDoLabelId)) {
-      operations.push({ name: 'label', run: () => api.removeLabel(task.id, plan.honeyDoLabelId) })
+    if (task.assignees?.some((a) => a.id === plan.userId)) {
+      operations.push({ name: 'assignee', run: () => api.unassignUser(task.id, plan.userId) })
     }
     if (task.due_date !== null) {
       operations.push({ name: 'ordering date', run: () => api.setDueDate(task.id, null) })
@@ -96,7 +97,7 @@ export async function applyUnlabel(plan: UnlabelPlan, api: UnlabelApi): Promise<
   }
   if (failures.length > 0) {
     throw new Error(
-      `Couldn't fully remove these tasks from Honey-Do: ${failures.join('; ')}. ` +
+      `Couldn't fully unassign these tasks: ${failures.join('; ')}. ` +
       'The list was refreshed to show the server state.'
     )
   }

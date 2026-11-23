@@ -4,6 +4,8 @@ import { getSequentialPosition, positionToDueDate, dueDateToPosition } from '../
 import { buildTree } from '../src/utils/taskTree.ts'
 import type { VikunjaTask } from '../src/types/vikunja.ts'
 
+const JACOB = { id: 1, username: 'jacob', name: 'Jacob' }
+
 function task(id: number, title: string, position: number, parentId?: number): VikunjaTask {
   return {
     id,
@@ -13,7 +15,8 @@ function task(id: number, title: string, position: number, parentId?: number): V
     done_at: null,
     due_date: positionToDueDate(position),
     project_id: 1,
-    labels: parentId === undefined ? [{ id: 1, title: 'Honey-Do' }] : [],
+    labels: [],
+    assignees: parentId === undefined ? [JACOB] : [],
     created: '',
     updated: '',
     ...(parentId === undefined ? {} : { related_tasks: { parenttask: [{ id: parentId, title: 'Parent' }] } }),
@@ -41,7 +44,7 @@ test('persisted tree order honors sequential insertions ahead of existing siblin
   const first = task(2, 'First created', -0.5, 1)
   const second = task(3, 'Second created', -0.25, 1)
   const existing = task(4, 'Existing', 0, 1)
-  const forest = buildTree([parent, existing, second, first], 'Honey-Do')
+  const forest = buildTree([parent, existing, second, first], 1)
   assert.deepEqual(forest[0].children.map((child) => child.title), ['First created', 'Second created', 'Existing'])
   assert.equal(dueDateToPosition(forest[0].children[1].due_date), -0.25)
 })
