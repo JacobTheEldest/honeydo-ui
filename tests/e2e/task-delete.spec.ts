@@ -120,7 +120,7 @@ test('letting the undo window close keeps the delete committed with no second wr
   await expect(row(page, 5)).toHaveCount(0)
 })
 
-test('deleting a parent asks for scope and this-task-only orphans its subtasks', async ({
+test('deleting a parent keeps its assigned subtasks visible as contextual roots', async ({
   page,
   request,
 }) => {
@@ -151,10 +151,11 @@ test('deleting a parent asks for scope and this-task-only orphans its subtasks',
   const toast = page.locator('[data-toast]')
   await expect(toast).toContainText('Deleted “Root A”')
   await expect(toast).not.toContainText('subtasks')
-  // Deleting only the parent drops its subtasks out of this view at once.
+  // Assigned subtasks become contextual roots after their parent leaves the
+  // active task list. They are still usable and remain in Vikunja.
   await expect(row(page, 1)).toHaveCount(0)
-  await expect(row(page, 11)).toHaveCount(0)
-  await expect(row(page, 12)).toHaveCount(0)
+  await expect(row(page, 11)).toHaveAttribute('data-sortable-id', 'r::11')
+  await expect(row(page, 12)).toHaveAttribute('data-sortable-id', 'r::12')
 
   await expect.poll(async () => (await deleteRequests(request)).map((entry) => entry.path))
     .toEqual(['/api/v2/tasks/1'])
@@ -170,8 +171,8 @@ test('deleting a parent asks for scope and this-task-only orphans its subtasks',
 
   await page.reload()
   await expect(row(page, 1)).toHaveCount(0)
-  await expect(row(page, 11)).toHaveCount(0)
-  await expect(row(page, 12)).toHaveCount(0)
+  await expect(row(page, 11)).toHaveAttribute('data-sortable-id', 'r::11')
+  await expect(row(page, 12)).toHaveAttribute('data-sortable-id', 'r::12')
 })
 
 test('undoing a task-only delete restores the parent with its subtask links intact', async ({

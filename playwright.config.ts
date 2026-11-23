@@ -35,6 +35,7 @@ export default defineConfig({
             PORT: String(appPort),
             VIKUNJA_API_KEY: 'fixture-only-test-key',
             VIKUNJA_BASE_URL: 'http://127.0.0.1:3001',
+            HONEYDO_ASSIGNEE_ID: '1',
           }
         : { HONEYDO_API_PROXY_TARGET: 'http://127.0.0.1:3001' },
       reuseExistingServer: false,

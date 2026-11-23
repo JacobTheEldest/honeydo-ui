@@ -45,8 +45,9 @@ function resetFixture() {
   addTask(11, 'Promotable child', 1, 40)
   addTask(12, 'Unlabeled-parent child', 1, 50)
   addTask(21, 'B descendant', 2, 60)
-  addTask(30, 'Hidden unassigned parent', 2, 70)
+  addTask(30, 'Hidden unassigned parent', 2, 70, [])
   addTask(31, 'Context child', 2, 80)
+  addTask(40, 'Laya task', 1, 90, [LAYA])
   nextCreatedId = 100
 }
 

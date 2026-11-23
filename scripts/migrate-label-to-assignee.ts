@@ -20,7 +20,6 @@ const API_KEY = process.env.VIKUNJA_API_KEY
 const HONEYDO_LABEL = process.env.HONEYDO_LABEL ?? 'Honey-Do'
 const ASSIGNEE_USERNAME = process.env.HONEYDO_ASSIGNEE_USERNAME ?? 'jacob'
 const DRY_RUN = process.argv.includes('--dry-run')
-const DETAIL_CONCURRENCY = 8
 
 if (!API_KEY) {
   console.error('VIKUNJA_API_KEY is required')

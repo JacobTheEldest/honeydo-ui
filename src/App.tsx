@@ -70,6 +70,7 @@ export default function App() {
   const { dark, toggle: toggleDarkMode } = useDarkMode()
   const [showCompleted, setShowCompleted] = useState(false)
   const [assigneeId, setAssigneeId] = useState<number | undefined>(HONEYDO_ASSIGNEE_ID)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set())
   const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null)
   const [unassignRequest, setUnassignRequest] = useState<{ taskId: number; busy: boolean } | null>(null)
@@ -489,10 +490,12 @@ export default function App() {
             {/* User dropdown */}
             <div className="relative">
               <button
-                onClick={() => {}}
+                onClick={() => setUserMenuOpen((open) => !open)}
                 className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
                 aria-label={selectedUser ? `Assigned to ${selectedUser.name ?? selectedUser.username}` : 'No user selected'}
                 aria-haspopup="listbox"
+                aria-expanded={userMenuOpen}
+                aria-controls="assignee-listbox"
               >
                 <User className="w-4 h-4" />
                 {selectedUser ? (
@@ -503,14 +506,21 @@ export default function App() {
               </button>
               {/* Simple user list — clicking a user switches the view */}
               <div
-                className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg hidden"
+                id="assignee-listbox"
+                role="listbox"
+                aria-label="Assigned user"
+                hidden={!userMenuOpen}
+                className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg"
               >
                 {users.map((user) => (
                   <button
                     key={user.id}
+                    type="button"
+                    role="option"
+                    aria-selected={assigneeId === user.id}
                     onClick={() => {
                       setAssigneeId(user.id)
-                      fetchTasks(user.id).catch(() => {})
+                      setUserMenuOpen(false)
                     }}
                     className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${assigneeId === user.id ? 'bg-gray-100 dark:bg-gray-700 text-honey-dark' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
                   >
