@@ -9,6 +9,7 @@ import {
 } from '@dnd-kit/sortable'
 import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown, Sun, Moon, User } from 'lucide-react'
 import { useVikunjaApi } from './hooks/useVikunjaApi.ts'
+import { getUserDisplayName } from './utils/userDisplay.ts'
 import { useUndoableActions } from './hooks/useUndoableActions.ts'
 import { useDarkMode } from './hooks/useDarkMode.ts'
 import { useTaskDragAndDrop } from './hooks/useTaskDragAndDrop.ts'
@@ -492,14 +493,14 @@ export default function App() {
               <button
                 onClick={() => setUserMenuOpen((open) => !open)}
                 className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
-                aria-label={selectedUser ? `Assigned to ${selectedUser.name ?? selectedUser.username}` : 'No user selected'}
+                aria-label={selectedUser ? `Assigned to ${getUserDisplayName(selectedUser)}` : 'No user selected'}
                 aria-haspopup="listbox"
                 aria-expanded={userMenuOpen}
                 aria-controls="assignee-listbox"
               >
                 <User className="w-4 h-4" />
                 {selectedUser ? (
-                  <span className="truncate max-w-[120px]">{selectedUser.name ?? selectedUser.username}</span>
+                  <span className="truncate max-w-[120px]">{getUserDisplayName(selectedUser)}</span>
                 ) : (
                   <span className="text-gray-400 truncate max-w-[120px]">Select user</span>
                 )}
@@ -524,7 +525,7 @@ export default function App() {
                     }}
                     className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${assigneeId === user.id ? 'bg-gray-100 dark:bg-gray-700 text-honey-dark' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
                   >
-                    {user.name ?? user.username}
+                    {getUserDisplayName(user)}
                   </button>
                 ))}
               </div>
