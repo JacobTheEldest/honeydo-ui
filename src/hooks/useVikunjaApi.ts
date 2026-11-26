@@ -52,6 +52,12 @@ async function apiList<T>(path: string): Promise<T[]> {
   return page.items ?? []
 }
 
+function mergeUsers(...groups: VikunjaUser[][]): VikunjaUser[] {
+  const byId = new Map<number, VikunjaUser>()
+  for (const user of groups.flat()) byId.set(user.id, user)
+  return [...byId.values()]
+}
+
 /** Run a list of promise-producing functions with a fixed concurrency cap. */
 async function runWithConcurrency<T, R>(
   items: T[],
@@ -91,9 +97,12 @@ export function useVikunjaApi() {
   )
 
   const fetchUsers = useCallback(async () => {
-    const data = await apiList<VikunjaUser>('/users?per_page=200')
-    setUsers(data)
-    return data
+    // Vikunja's /users endpoint is a search and returns no rows without q.
+    // The authenticated user is the seed; assignments found in task lists add
+    // the other users who can actually be selected in this task view.
+    const currentUser = await apiFetch<VikunjaUser>('/user')
+    setUsers((previous) => mergeUsers(previous, [currentUser]))
+    return [currentUser]
   }, [])
 
   const fetchTaskDetail = useCallback(async (id: number): Promise<VikunjaTask> => {
@@ -214,6 +223,8 @@ export function useVikunjaApi() {
         await collectSubtaskDetails(enrichedSeed, seen, detailedIds)
 
         const allTasks = Array.from(seen.values())
+        const assignedUsers = allTasks.flatMap((task) => task.assignees ?? [])
+        setUsers((previous) => mergeUsers(previous, assignedUsers))
         setTasksAndRef(allTasks)
         return allTasks
       } catch (e) {

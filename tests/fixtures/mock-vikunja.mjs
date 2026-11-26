@@ -99,6 +99,7 @@ app.get('/config.js', (_req, res) => {
 // delete into the trash destroys nothing (relation rows survive both
 // directions), restore re-exposes them.
 // ---------------------------------------------------------------------------
+app.get('/api/v2/user', (_req, res) => res.json(JACOB))
 app.get('/api/v2/users', (_req, res) => res.json(envelope([...users.values()])))
 app.get('/api/v2/users/:id', (req, res) => {
   const id = Number(req.params.id)
