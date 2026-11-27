@@ -8,6 +8,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { Eye, EyeOff, Loader2, ChevronsDownUp, ChevronsUpDown, Sun, Moon, User } from 'lucide-react'
+import type { VikunjaUser } from './types/vikunja.ts'
 import { useVikunjaApi } from './hooks/useVikunjaApi.ts'
 import { getUserDisplayName } from './utils/userDisplay.ts'
 import { useUndoableActions } from './hooks/useUndoableActions.ts'
@@ -39,6 +40,12 @@ import { countDescendants, planUnassign, type UnassignDecision } from './utils/u
 import { planDelete, type DeleteDecision, type DeleteScope } from './utils/delete.ts'
 import { HONEYDO_ASSIGNEE_ID, DEFAULT_PROJECT_ID } from './config.ts'
 
+function mergePickerUsers(...groups: VikunjaUser[][]): VikunjaUser[] {
+  const byId = new Map<number, VikunjaUser>()
+  for (const user of groups.flat()) byId.set(user.id, user)
+  return [...byId.values()]
+}
+
 function findNode(nodes: TaskTreeNode[], id: number): TaskTreeNode | null {
   for (const node of nodes) {
     if (node.id === id) return node
@@ -56,6 +63,8 @@ export default function App() {
     error,
     fetchTasks,
     fetchUsers,
+    searchUsers,
+    setUsers,
     createTask,
     createSubtask,
     deleteTask,
@@ -72,6 +81,11 @@ export default function App() {
   const [showCompleted, setShowCompleted] = useState(false)
   const [assigneeId, setAssigneeId] = useState<number | undefined>(HONEYDO_ASSIGNEE_ID)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [userSearch, setUserSearch] = useState('')
+  const [userSearchResults, setUserSearchResults] = useState<VikunjaUser[]>([])
+  const [userSearchQuery, setUserSearchQuery] = useState('')
+  const [userSearchLoading, setUserSearchLoading] = useState(false)
+  const [userSearchError, setUserSearchError] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set())
   const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null)
   const [unassignRequest, setUnassignRequest] = useState<{ taskId: number; busy: boolean } | null>(null)
@@ -96,6 +110,40 @@ export default function App() {
   }, [tasks])
 
   const selectedUser = users.find((u) => u.id === assigneeId)
+  const selectedUserLabel = selectedUser ? getUserDisplayName(selectedUser) : undefined
+  const pickerUsers = userSearchQuery
+    ? mergePickerUsers(users, userSearchResults)
+    : users
+
+  useEffect(() => {
+    const query = userSearch.trim()
+    if (!userMenuOpen || !query) return
+
+    let active = true
+    const timer = window.setTimeout(() => {
+      setUserSearchLoading(true)
+      setUserSearchError(null)
+      setUserSearchQuery(query)
+      void searchUsers(query)
+        .then((results) => {
+          if (active) {
+            setUserSearchResults(results)
+            setUsers((previous) => mergePickerUsers(previous, results))
+            setUserSearchLoading(false)
+          }
+        })
+        .catch(() => {
+          if (active) {
+            setUserSearchError('Could not search users. Try again.')
+            setUserSearchLoading(false)
+          }
+        })
+    }, 250)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [userMenuOpen, userSearch, searchUsers, setUsers])
 
   // Stable handlers
   const {
@@ -491,43 +539,85 @@ export default function App() {
             {/* User dropdown */}
             <div className="relative">
               <button
-                onClick={() => setUserMenuOpen((open) => !open)}
+                onClick={() => {
+                  setUserMenuOpen((open) => {
+                    if (!open) {
+                      setUserSearch('')
+                      setUserSearchQuery('')
+                      setUserSearchResults([])
+                      setUserSearchError(null)
+                    }
+                    return !open
+                  })
+                }}
                 className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
-                aria-label={selectedUser ? `Assigned to ${getUserDisplayName(selectedUser)}` : 'No user selected'}
+                aria-label={selectedUserLabel ? `Assigned to ${selectedUserLabel}` : 'No user selected'}
                 aria-haspopup="listbox"
                 aria-expanded={userMenuOpen}
                 aria-controls="assignee-listbox"
               >
                 <User className="w-4 h-4" />
-                {selectedUser ? (
-                  <span className="truncate max-w-[120px]">{getUserDisplayName(selectedUser)}</span>
+                {selectedUserLabel ? (
+                  <span className="truncate max-w-[120px]">{selectedUserLabel}</span>
                 ) : (
                   <span className="text-gray-400 truncate max-w-[120px]">Select user</span>
                 )}
               </button>
-              {/* Simple user list — clicking a user switches the view */}
               <div
                 id="assignee-listbox"
                 role="listbox"
                 aria-label="Assigned user"
                 hidden={!userMenuOpen}
-                className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg"
+                className="absolute right-0 top-full z-50 mt-1 min-w-[220px] rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 p-2 shadow-lg"
               >
-                {users.map((user) => (
-                  <button
-                    key={user.id}
-                    type="button"
-                    role="option"
-                    aria-selected={assigneeId === user.id}
-                    onClick={() => {
-                      setAssigneeId(user.id)
-                      setUserMenuOpen(false)
-                    }}
-                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${assigneeId === user.id ? 'bg-gray-100 dark:bg-gray-700 text-honey-dark' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
-                  >
-                    {getUserDisplayName(user)}
-                  </button>
-                ))}
+                <input
+                  type="search"
+                  value={userSearch}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    setUserSearch(value)
+                    if (!value.trim()) {
+                      setUserSearchQuery('')
+                      setUserSearchResults([])
+                      setUserSearchError(null)
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') setUserMenuOpen(false)
+                  }}
+                  placeholder="Search users…"
+                  aria-label="Search users"
+                  className="mb-1 w-full rounded-md border border-gray-200 bg-white px-2.5 py-2 text-sm text-gray-800 outline-none focus:border-honey dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                />
+                <div className="max-h-64 overflow-y-auto">
+                  {pickerUsers.map((user) => (
+                    <button
+                      key={user.id}
+                      type="button"
+                      role="option"
+                      aria-selected={assigneeId === user.id}
+                      onClick={() => {
+                        setAssigneeId(user.id)
+                        setUserMenuOpen(false)
+                        setUserSearch('')
+                        setUserSearchQuery('')
+                        setUserSearchResults([])
+                      }}
+                      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${assigneeId === user.id ? 'bg-gray-100 dark:bg-gray-700 text-honey-dark' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+                    >
+                      {getUserDisplayName(user)}
+                    </button>
+                  ))}
+                  {userSearch.trim() && userSearchLoading && (
+                    <p className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">Searching…</p>
+                  )}
+                  {userSearch.trim() && userSearchError && (
+                    <p role="alert" className="px-3 py-2 text-sm text-red-600 dark:text-red-400">{userSearchError}</p>
+                  )}
+                  {userSearch.trim() && !userSearchLoading && !userSearchError && userSearchResults.length === 0 && (
+                    <p className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">No matching users</p>
+                  )}
+                </div>
               </div>
             </div>
           </div>

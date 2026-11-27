@@ -4,9 +4,10 @@ const app = express()
 app.use(express.json())
 const JACOB = { id: 1, username: 'jacob', name: 'Jacob' }
 const LAYA = { id: 2, username: 'laya', name: 'Laya' }
+const UNASSIGNED = { id: 3, username: 'unassigned-user', name: 'Unassigned User' }
 const date = (position) => new Date(Date.UTC(2100, 0, 1, 0, position)).toISOString()
 const tasks = new Map()
-const users = new Map([[1, JACOB], [2, LAYA]])
+const users = new Map([[1, JACOB], [2, LAYA], [3, UNASSIGNED]])
 const trashed = new Map()
 const parents = new Map([[11, 1], [12, 1], [21, 2], [31, 30]])
 const requests = []
@@ -100,7 +101,13 @@ app.get('/config.js', (_req, res) => {
 // directions), restore re-exposes them.
 // ---------------------------------------------------------------------------
 app.get('/api/v2/user', (_req, res) => res.json(JACOB))
-app.get('/api/v2/users', (_req, res) => res.json(envelope([...users.values()])))
+app.get('/api/v2/users', (req, res) => {
+  const query = String(req.query.q ?? '').toLowerCase()
+  const matches = [...users.values()].filter((user) =>
+    `${user.username} ${user.name ?? ''}`.toLowerCase().includes(query)
+  )
+  res.json(envelope(matches))
+})
 app.get('/api/v2/users/:id', (req, res) => {
   const id = Number(req.params.id)
   const user = users.get(id)

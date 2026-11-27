@@ -98,11 +98,14 @@ export function useVikunjaApi() {
 
   const fetchUsers = useCallback(async () => {
     // Vikunja's /users endpoint is a search and returns no rows without q.
-    // The authenticated user is the seed; assignments found in task lists add
-    // the other users who can actually be selected in this task view.
+    // The authenticated user is the seed; assigned users are merged from task lists.
     const currentUser = await apiFetch<VikunjaUser>('/user')
     setUsers((previous) => mergeUsers(previous, [currentUser]))
     return [currentUser]
+  }, [])
+
+  const searchUsers = useCallback(async (query: string) => {
+    return apiList<VikunjaUser>(`/users?q=${encodeURIComponent(query)}`)
   }, [])
 
   const fetchTaskDetail = useCallback(async (id: number): Promise<VikunjaTask> => {
@@ -438,11 +441,13 @@ export function useVikunjaApi() {
 
   return {
     users,
+    setUsers,
     tasks,
     loading,
     error,
     fetchTasks,
     fetchUsers,
+    searchUsers,
     createTask,
     createSubtask,
     deleteTask,
